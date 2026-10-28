@@ -1,0 +1,32 @@
+feat: layout-restore —— 参考图 → 可编辑源件包（像素级可验收）
+
+把一张参考图拆成三层，产出能打开就改的 HTML+CSS+SVG 源件包：
+  L1 照片层 plate.png         原图挖字后修补
+  L2 矢量结构层 rects/lines   色块、表格线 —— 改色改宽都是改一个数
+  L3 文字层 SVG <text>        活字 —— 能改价、改文案
+
+核心能力
+  · 分层探针：OCR + 色块 + 美术层 + 取色判据（majority / ring / 局部底色仲裁）
+  · 矢量结构层检测：直边矩形 + 色彩离散度双判据
+  · 逐属性寻优：字号 / 基线 / x / 字重 / 字色，区域 patch 渲染打分
+  · 像素层降级：字形还原不出来的字自动转像素层
+  · 双版本交付：活字版（可编辑）+ 像素层版（逐像素一致）
+  · 验收：从交付源件包重渲并与原图对账（verify），非文字区差异应为 0.00%
+
+工程形态
+  · 唯一入口 CLI：build / probe / autospec / vectorize / verify / overview / report / status
+  · 配置外置：config.yaml（阈值 / 路径 / 字体 / 取色模式），代码不写死数据
+  · 状态板：status 命令 + 每个 run 自带 deliver/ 目录，可整体拷走
+
+示例与素材
+  · 三张示例图全部由 examples/make_samples.py 程序绘制（原创素材，无第三方版权）
+  · 实测：demo_param_card 5.11% / demo_brace_title 3.64% / demo_compare 3.53%
+  · 热力图显示残差全部集中在文字 —— 字体替代是天花板，不是分层逻辑的问题
+
+文档
+  · docs/01_三层模型.md      分层骨架
+  · docs/02_铁律.md          踩坑换来的硬规则（最有价值）
+  · docs/03_版式族方法论.md  族怎么定、怎么复用
+  · docs/04_架构.md          代码结构 + 扩展点
+  · docs/05_快速开始.md      用法 + 常见问题
+  · skills/layout-restore/SKILL.md  Mavis Skill 薄壳

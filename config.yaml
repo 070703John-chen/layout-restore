@@ -1,0 +1,38 @@
+# layout-restore 配置
+#
+# 分层原则（别破坏）：
+#   代码写「怎么判」：探针 / 矢量检测 / 寻优 / 取色判据   → 改算法 = 改代码
+#   配置写「判什么·在哪」：阈值 / 路径 / 字体              → 改数据 = 改这里
+#   状态板写「到哪了」：out/*/ + status 命令
+#
+# 所有路径都相对仓库根目录。
+
+build:
+  # 取字色的方式：
+  #   majority = 框内像素最大簇当底色（电商图/深色标题条必需）
+  #   ring     = 框外一圈中位色当底色（海报/纯色底更稳）
+  ink_mode: majority
+
+  # OCR 置信度下限（低于这个值的框不建元素）
+  min_conf: 0.45
+
+  # 族级配方：强制字体。
+  # 电商促销大字是**黑体**，套成宋体差异率能飙到 20% —— 所以这里必须显式指定。
+  cjk_font: "Noto Sans SC"
+  latin_font: "Noto Sans SC"
+
+  # 区域差异率 > 此值(%) → 该文字降级成像素层（字形还原不出来的兜底）
+  px_threshold: 18.0
+
+  # 并行进程数
+  jobs: 4
+
+verify:
+  # 与 rebuild 记录的差异率允许的偏差（百分点）
+  tol: 0.15
+
+paths:
+  refs: "examples/samples"
+  specs: "specs"
+  out: "out"
+  work: ".work"
