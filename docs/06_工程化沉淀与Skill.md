@@ -12,8 +12,8 @@
 | 资产 | 位置 | 是什么 | 给谁用 |
 |---|---|---|---|
 | **开源仓库** `layout-restore` | GitHub `070703John-chen/layout-restore` | **通用引擎 + CLI**。不含任何第三方素材、不含项目私有路径 | 招聘方 / 任何人 clone 就能跑 |
-| **Skill** `layout-restore` | `C:\Users\AL\.mavis\agents\mavis\skills\layout-restore\` | **批量流水线的说明书 + 编排脚本**（选片/跑批/验收/报告/建站）。装在 agent 上，任何 session 都能触发 | 我（agent）在任何 session 里接到「复刻这批图」就能直接干 |
-| **本地工程** `15_淘宝复刻工程` | `D:\电商素材\设计中枢\15_淘宝复刻工程` | **数据与产物**：原图库、族聚类、50 张交付包、指标 | 陈的工作台 |
+| **Skill** `layout-restore` | agent 的 skill 目录（`~/.mavis/agents/<agent>/skills/layout-restore/`） | **批量流水线的说明书 + 编排脚本**（选片/跑批/验收/报告/建站）。装在 agent 上，任何 session 都能触发 | 我（agent）在任何 session 里接到「复刻这批图」就能直接干 |
+| **本地工程** `15_淘宝复刻工程` | 本机工作台目录（路径见 `config.local.yaml` 的 `paths.project`） | **数据与产物**：原图库、族聚类、50 张交付包、指标 | 陈的工作台 |
 
 ### 依赖方向（单向，不循环）
 

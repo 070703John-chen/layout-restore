@@ -23,35 +23,24 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.dirname(HERE)
 CFG_PATH = os.path.join(SKILL, "config.yaml")
+CFG_LOCAL = os.path.join(SKILL, "config.local.yaml")
 
 
 # ------------------------------------------------------------------ 配置
 DEFAULTS = {
-    "engine": {
-        "restore": r"D:\云端全存档\设计作品集\04_生成与改稿\版式工程",
-        "python": r"D:\Python311\python.exe",
-    },
+    "engine": {"restore": "", "python": ""},
     "paths": {
-        "raw": r"D:\电商素材\LED灯\01_raw_taobao",
-        "project": r"D:\电商素材\设计中枢\15_淘宝复刻工程",
-        "specs": "specs",
-        "out": "out",
-        "work": "_work",
-        "deliver": r"D:\云端全存档\设计作品集\05_成品与源文件\主图",
-        "features": r"D:\电商素材\设计中枢\15_淘宝复刻工程\_work\tb_features.json",
-        "clusters": r"D:\电商素材\设计中枢\15_淘宝复刻工程\_work\tb_clusters.json",
+        "raw": "", "project": "", "specs": "specs", "out": "out",
+        "work": "_work", "deliver": "", "features": "", "clusters": "",
+        "verify": "",
     },
     "batch": {
-        "jobs": 2,
-        "target": 50,
-        "ink_mode": "majority",
-        "min_conf": 0.45,
-        "cjk_font": "Noto Sans SC",
-        "px_threshold": 18.0,
+        "jobs": 2, "target": 50, "ink_mode": "majority", "min_conf": 0.45,
+        "cjk_font": "Noto Sans SC", "px_threshold": 18.0,
         "pick": {"main_all": True, "secondary": 29, "cluster_quota": True},
     },
     "report": {"pass_threshold": 8.0, "real_text_min": 3},
-    "site": {"dir": "批量复刻50张_对比站", "thumb": 420},
+    "site": {"dir": "批量复刻50张_对比站", "thumb": 420, "enabled": True},
 }
 
 
@@ -62,8 +51,19 @@ def _deep(a, b):
     return out
 
 
+def _read_yaml(p):
+    import yaml
+    with open(p, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        raise ValueError("配置不是字典：%r" % type(data))
+    return data
+
+
 def load_cfg(path=None):
     """读配置。
+
+    加载顺序：DEFAULTS → config.yaml → **config.local.yaml**（后者覆盖前者）。
 
     ⚠ 解析失败**直接报错退出**，不静默退回默认值 ——
       坏配置静默降级比崩掉更糟：脚本会拿着默认路径跑，
@@ -73,24 +73,21 @@ def load_cfg(path=None):
     p = path or CFG_PATH
     if not os.path.exists(p):
         sys.stderr.write("[cfg] 找不到配置文件 %s\n" % p)
-        return dict(DEFAULTS)
+        raise SystemExit(2)
     try:
-        import yaml
-    except ImportError:
-        sys.stderr.write("[cfg] 没装 PyYAML，装不了就手工改 DEFAULTS\n")
-        return dict(DEFAULTS)
-    try:
-        with open(p, encoding="utf-8") as fh:
-            data = yaml.safe_load(fh)
+        cfg = _read_yaml(p)
     except Exception as e:
-        sys.stderr.write("[cfg] 配置解析失败：%r\n" % (e,))
-        sys.stderr.write("[cfg] 文件：%s\n" % p)
+        sys.stderr.write("[cfg] 配置解析失败：%r\n  文件：%s\n" % (e, p))
         sys.stderr.write("[cfg] 修好再跑 —— 静默用默认路径比崩更糟\n")
         raise SystemExit(2)
-    if not isinstance(data, dict):
-        sys.stderr.write("[cfg] 配置不是字典：%r\n" % type(data))
-        raise SystemExit(2)
-    return _deep(DEFAULTS, data)
+    # 本机覆盖（不入库）
+    if os.path.exists(CFG_LOCAL):
+        try:
+            cfg = _deep(cfg, _read_yaml(CFG_LOCAL))
+        except Exception as e:
+            sys.stderr.write("[cfg] config.local.yaml 解析失败：%r\n" % (e,))
+            raise SystemExit(2)
+    return _deep(DEFAULTS, cfg)
 
 
 def g(cfg, dotted, default=None):

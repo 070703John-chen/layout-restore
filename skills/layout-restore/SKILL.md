@@ -29,8 +29,8 @@ displayNames:
 
 ## Inputs to collect
 
-- **参考图在哪**：默认 `D:\电商素材\LED灯\01_raw_taobao`（`main` / `secondary`）。
-  用户给了别的目录就改 `config.yaml` 的 `paths.raw`。
+- **参考图在哪**：看 `config.local.yaml` 的 `paths.raw`（默认是淘宝原图库，
+  里面有 `main` / `secondary` 两个子目录）。用户给了别的目录就改这个配置。
 - **要几张**：默认 50（`batch.target`）。
 - **要什么产物**：可编辑源件包（默认）+ 成品 PNG + 差异热力图 + 对比网站。
   缺省时按默认做，不必追问 —— 这些是这套流程的标准输出。

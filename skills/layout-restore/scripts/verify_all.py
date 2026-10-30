@@ -17,10 +17,9 @@ import time
 import argparse
 import subprocess
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 import common as C
-
-VERIFY_PY = r"D:\电商素材\设计中枢\16_开源项目\layout-restore\layout_restore\verify.py"
 
 
 def main():
@@ -46,8 +45,9 @@ def main():
     os.makedirs(logdir, exist_ok=True)
     env = C.child_env(cfg)
 
-    if not os.path.exists(VERIFY_PY):
-        print("找不到通用版 verify：%s" % VERIFY_PY)
+    verify_py = C.g(cfg, "paths.verify", "")
+    if not verify_py or not os.path.exists(verify_py):
+        print("找不到通用版 verify：%s" % (verify_py or "(未配置 paths.verify)"))
         print("（公开仓库 layout-restore 里那份是通用版；引擎里那份是写死项目的旧版）")
         return 2
 
@@ -62,7 +62,7 @@ def main():
             pack = os.path.join(out_root, j["key"])
             log = os.path.join(logdir, "v_%s.log" % j["key"])
             fh = open(log, "w", encoding="utf-8")
-            p = subprocess.Popen([py, VERIFY_PY, "--pack", pack],
+            p = subprocess.Popen([py, verify_py, "--pack", pack],
                                  env=env, stdout=fh, stderr=subprocess.STDOUT)
             running.append((j, p, fh, log))
             time.sleep(1)

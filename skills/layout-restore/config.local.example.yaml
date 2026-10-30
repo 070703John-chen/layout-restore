@@ -1,0 +1,16 @@
+# config.local.yaml —— 本机真实路径（**不入库**）
+#
+# 复制 config.yaml 后改这里。加载顺序：config.yaml → config.local.yaml（后者覆盖）。
+# 放不进仓库的真实路径、token、账号都写这里。
+#
+# 格式示例：
+engine:
+  restore: "D:/云端全存档/设计作品集/04_生成与改稿/版式工程"
+  python: "D:/Python311/python.exe"
+paths:
+  raw: "D:/电商素材/LED灯/01_raw_taobao"
+  project: "D:/电商素材/设计中枢/15_淘宝复刻工程"
+  deliver: "D:/云端全存档/设计作品集/05_成品与源文件/主图"
+  features: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_features.json"
+  clusters: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_clusters.json"
+  verify: "D:/电商素材/设计中枢/16_开源项目/layout-restore/layout_restore/verify.py"

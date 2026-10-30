@@ -85,6 +85,13 @@ def main():
         print("%sOCR 包  rapidocr_onnxruntime（探针必需）" % BAD)
         bad += 1
 
+    # 5.5 本机覆盖配置
+    if os.path.exists(os.path.join(C.SKILL, "config.local.yaml")):
+        print("%s本机配置  config.local.yaml 已加载" % OK)
+    else:
+        print("%s本机配置  没有 config.local.yaml（路径全靠 config.yaml，"
+              "仓库版是占位符）" % WARN)
+
     # 6. 淘宝原图库
     raw = C.path_of(cfg, "raw")
     n = 0
@@ -118,11 +125,13 @@ def main():
             bad += 1
 
     # 9. 通用版 verify（公开仓库那份）
-    vp = r"D:\电商素材\设计中枢\16_开源项目\layout-restore\layout_restore\verify.py"
-    if os.path.exists(vp):
+    vp = C.g(cfg, "paths.verify", "")
+    if vp and os.path.exists(vp):
         print("%s通用 verify  %s" % (OK, vp))
     else:
-        print("%s通用 verify  %s（验收要它）" % (WARN, vp))
+        print("%s通用 verify  %s（验收要它；在 config.local.yaml 里配 paths.verify）"
+              % (BAD, vp or "(未配置)"))
+        bad += 1
 
     # 10. 已产出的批次
     out = C.path_of(cfg, "out")

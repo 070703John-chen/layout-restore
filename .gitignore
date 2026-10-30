@@ -20,3 +20,7 @@ runs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本机真实路径（不入库）
+config.local.yaml
+skills/layout-restore/config.local.yaml
