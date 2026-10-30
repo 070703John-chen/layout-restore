@@ -1,0 +1,70 @@
+# config.local.multicat.yaml —— 多品类批次模板（**不入库**）
+#
+# 复制成 config.local.multicat.yaml 后改这里。
+# 加载方式：环境变量 LAYOUT_RESTORE_PROFILE=multicat
+#
+# ⚠ 为什么要 profile：
+#   同一套 skill 要同时服务多个批次（不同原图库 / 不同工程根），
+#   反复改同一个 config.local.yaml 会把上一批搞乱。
+#   → 每个批次一个 config.local.<profile>.yaml，互不干扰。
+#
+# ⚠「组」的定义（重要，别误解）：
+#   抓图走**通道 B**（必应图片索引 → alicdn 直链），拿到的是**散图，没有商品结构**，
+#   不知道哪张附图属于哪张主图。
+#   所以这里的「组」= **同一品类下视觉特征相近的一簇图**（版式族）：
+#   组内 1 张最典型的作主图，其余作附图。
+#   ⇒ 这**不是**「同一商品的主图+附图」，是「同一版式的图组」。
+#   想要真实商品结构，得开带登录态的浏览器走通道 A（CDP 9222）。
+
+engine:
+  # 还原引擎目录：里面要有 probe_layers.py / autospec.py / rebuild.py
+  restore: "<你的还原引擎目录>"
+  # 唯一带 chromium 的 python（出图必须用它）
+  python: "<你的 python.exe 全路径>"
+
+paths:
+  # 工程根（tb_run.py 的 specs/ 和 out/ 都落这里）
+  project: "<你的工程根>"
+  # 本批的日志/进度目录（与别的批次分开）
+  work: "<你的工程根>/_work"
+  # 原图库（按品类分子目录）
+  raw: "<你的原图库>"
+  specs: "specs"
+  out: "out"
+  deliver: "<你的交付根>"
+  features: ""
+  clusters: ""
+  verify: "<克隆下来的仓库>/layout_restore/verify.py"
+  # 含 tb_family.py 的目录（特征提取器复用，单一事实源）
+  tbhome: "<含 tb_family.py 的目录>"
+
+multicat:
+  # 每品类几个「组」（组 = 1 主图 + per_group_secondary 张附图）
+  groups: 3
+  per_group_main: 1
+  per_group_secondary: 2
+  cats:
+    cat_a:
+      label: "品类A"
+      dir: "<你的原图库>/cat_a"
+    cat_b:
+      label: "品类B"
+      dir: "<你的原图库>/cat_b"
+
+batch:
+  jobs: 2
+  target: 36
+  ink_mode: majority
+  min_conf: 0.45
+  cjk_font: "Noto Sans SC"
+  px_threshold: 18.0
+
+report:
+  pass_threshold: 8.0
+  real_text_min: 3
+
+site:
+  # ⚠ 不能跟别的批次同名，否则会把那套站覆盖掉
+  dir: "多品类_对比站"
+  thumb: 420
+  enabled: true

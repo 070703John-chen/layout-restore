@@ -101,10 +101,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--target", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--jobs-file", default=None,
+                    help="任务清单文件名（默认 batch_jobs.json；"
+                         "target 不是默认 50 时自动用 batch_jobs_<target>.json）")
     a = ap.parse_args()
 
     cfg = C.load_cfg()
-    target = a.target or C.g(cfg, "batch.target", 50)
+    default_target = C.g(cfg, "batch.target", 50)
+    target = a.target or default_target
+    # ⚠ **别覆盖别人的批次清单**。
+    #   原来无论 target 多少都写 batch_jobs.json → 跑 `pipeline.py --target 10`
+    #   会把跑了两小时的 50 张任务清单冲掉，续跑和报告全部对不上。
+    #   现在：target 与默认不同 → 落到独立文件名。
+    jobs_file = a.jobs_file
+    if not jobs_file:
+        jobs_file = "batch_jobs.json" if target == default_target \
+            else "batch_jobs_%d.json" % target
     fp = C.path_of(cfg, "features")
     cp = C.path_of(cfg, "clusters")
     for p in (fp, cp):
@@ -196,7 +208,7 @@ def main():
         print("  缺图:", missing)
     if a.dry_run:
         return 0
-    p = C.save_jobs(cfg, jobs)
+    p = C.save_jobs(cfg, jobs, jobs_file)
     print("-> %s" % p)
     return 0
 

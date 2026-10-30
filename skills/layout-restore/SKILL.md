@@ -93,6 +93,22 @@ displayNames:
 
 `python scripts/pipeline.py` 串起上面全部。适合「从头到尾重做一遍」。
 
+### 多品类批次（每品类 N 组）
+
+```powershell
+$env:LAYOUT_RESTORE_PROFILE='multicat'
+python scripts/pick_multicat.py      # 每品类独立聚类 → 每品类 N 组
+python scripts/run_batch.py --jobs-file batch_jobs.json
+```
+
+- **profile 机制**：每个批次一份 `config.local.<profile>.yaml`（**不入库**），
+  用环境变量 `LAYOUT_RESTORE_PROFILE` 切换。多个批次共用同一个 skill，
+  不用反复改同一份配置把上一批搞乱。
+- **「组」是什么**：抓图走通道 B（必应索引 → alicdn 直链），拿到的是**散图、
+  没有商品结构** —— 不知道哪张附图属于哪张主图。所以「组」= **同品类下视觉特征
+  相近的一簇图**（版式族），组内 1 张最典型的作主图，其余作附图。
+  **这不是「同一商品的主图+附图」。** 要真实商品结构，得开带登录态的浏览器走通道 A。
+
 ### 单张复刻（只要一张）
 
 ```powershell

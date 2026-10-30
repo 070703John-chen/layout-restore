@@ -25,6 +25,23 @@ SKILL = os.path.dirname(HERE)
 CFG_PATH = os.path.join(SKILL, "config.yaml")
 CFG_LOCAL = os.path.join(SKILL, "config.local.yaml")
 
+# 批次 profile：同一套 skill 要同时服务多个批次（不同原图库 / 不同工程根）时，
+# 用 `config.local.<profile>.yaml` 隔离，避免反复改同一个配置文件把上一批搞乱。
+# 用法：环境变量 LAYOUT_RESTORE_PROFILE=multicat
+PROFILE_ENV = "LAYOUT_RESTORE_PROFILE"
+
+
+def profile_name():
+    return (os.environ.get(PROFILE_ENV) or "").strip()
+
+
+def local_cfg_path(profile=None):
+    """本机覆盖配置路径。指定 profile → config.local.<profile>.yaml。"""
+    p = (profile or profile_name()).strip()
+    if p:
+        return os.path.join(SKILL, "config.local.%s.yaml" % p)
+    return CFG_LOCAL
+
 
 # ------------------------------------------------------------------ 配置
 DEFAULTS = {
@@ -60,7 +77,7 @@ def _read_yaml(p):
     return data
 
 
-def load_cfg(path=None):
+def load_cfg(path=None, profile=None):
     """读配置。
 
     加载顺序：DEFAULTS → config.yaml → **config.local.yaml**（后者覆盖前者）。
@@ -81,12 +98,16 @@ def load_cfg(path=None):
         sys.stderr.write("[cfg] 修好再跑 —— 静默用默认路径比崩更糟\n")
         raise SystemExit(2)
     # 本机覆盖（不入库）
-    if os.path.exists(CFG_LOCAL):
+    lp = local_cfg_path(profile)
+    if os.path.exists(lp):
         try:
-            cfg = _deep(cfg, _read_yaml(CFG_LOCAL))
+            cfg = _deep(cfg, _read_yaml(lp))
         except Exception as e:
-            sys.stderr.write("[cfg] config.local.yaml 解析失败：%r\n" % (e,))
+            sys.stderr.write("[cfg] %s 解析失败：%r\n" % (lp, e))
             raise SystemExit(2)
+    elif profile:
+        sys.stderr.write("[cfg] profile=%s 但找不到 %s\n" % (profile, lp))
+        raise SystemExit(2)
     return _deep(DEFAULTS, cfg)
 
 

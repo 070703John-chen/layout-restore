@@ -54,17 +54,25 @@ def main():
         return 0
 
     t0 = time.time()
+    # ⚠ 批次清单文件名统一算一次，各步共用 ——
+    #   target 与配置默认不同 → 独立文件名，不覆盖已有的批次清单。
+    default_target = C.g(cfg, "batch.target", 50)
+    target = a.target or default_target
+    jf = ("batch_jobs.json" if target == default_target
+          else "batch_jobs_%d.json" % target)
+
     pa = []
     if a.target:
         pa += ["--target", str(a.target)]
     rc = step("① 选片", ["pick.py"] + pa, py)
     if rc:
         return rc
+    print("   批次清单：%s" % jf)
 
     pa = []
     if a.jobs:
         pa += ["--jobs", str(a.jobs)]
-    rc = step("② 批量复刻", ["run_batch.py"] + pa, py)
+    rc = step("② 批量复刻", ["run_batch.py"] + pa + ["--jobs-file", jf], py)
     if rc:
         print("有失败项，先看 <work>/logs/ 下的日志")
 
@@ -72,16 +80,17 @@ def main():
     #   调用方/CI 看不出这轮到底跑通了没（2026-10-30 修）。
     bad = 1 if rc else 0
     rc = step("③ 全量验收 verify",
-              ["verify_all.py"] + (["--jobs", str(a.jobs)] if a.jobs else []), py)
+              ["verify_all.py"] + (["--jobs", str(a.jobs)] if a.jobs else [])
+              + ["--jobs-file", jf], py)
     if rc:
         bad = 1
         print("验收有不一致 —— 交付包重渲结果和 _report.json 对不上")
 
-    rc = step("④ 指标汇总", ["report.py"], py)
+    rc = step("④ 指标汇总", ["report.py", "--jobs-file", jf], py)
     if rc:
         bad = 1
     if C.g(cfg, "site.enabled", True) and not a.skip_site:
-        rc = step("⑤ 对比网站", ["make_site.py"], py)
+        rc = step("⑤ 对比网站", ["make_site.py", "--jobs-file", jf], py)
         if rc:
             bad = 1
 

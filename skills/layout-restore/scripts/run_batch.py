@@ -28,10 +28,12 @@ def main():
     ap.add_argument("--only", default=None, help="只跑这些 KEY（逗号分隔）")
     ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--force", action="store_true", help="已产出的也重跑")
+    ap.add_argument("--jobs-file", default="batch_jobs.json",
+                    help="任务清单文件名（pick.py --target N 时是 batch_jobs_N.json）")
     a = ap.parse_args()
 
     cfg = C.load_cfg()
-    jobs = C.load_jobs(cfg)
+    jobs = C.load_jobs(cfg, a.jobs_file)
     if a.only:
         keys = {k.strip() for k in a.only.split(",") if k.strip()}
         jobs = [j for j in jobs if j["key"] in keys]

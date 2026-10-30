@@ -58,12 +58,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None, help="Markdown 报告路径")
     ap.add_argument("--json", default=None, help="指标明细 JSON 路径")
+    ap.add_argument("--jobs-file", default="batch_jobs.json",
+                    help="任务清单文件名（pick.py --target N 时是 batch_jobs_N.json）")
     a = ap.parse_args()
 
     cfg = C.load_cfg()
     th = C.g(cfg, "report.pass_threshold", 8.0)
     rt = C.g(cfg, "report.real_text_min", 3)
-    jobs = C.load_jobs(cfg)
+    jobs = C.load_jobs(cfg, a.jobs_file)
     meta = {j["key"]: j for j in jobs}
     rows = C.collect(cfg, [j["key"] for j in jobs] if jobs else None)
     for r in rows:
@@ -72,6 +74,7 @@ def main():
             r["name"] = j["name"]
             r["dom"] = j["dom"]
             r["cluster"] = j["cluster"]
+            r["cat"] = j.get("cat", "")
 
     ok = [r for r in rows if r["live"] is not None]
     n = len(ok)
@@ -133,6 +136,19 @@ def main():
             med = sorted(r["live"] for r in g)[len(g) // 2]
             print("  %-4s %2d 张  达标 %2d (%.0f%%)  平均 %.2f%%  中位 %.2f%%"
                   % (dom, len(g), len(gh), 100.0 * len(gh) / len(g), avg, med))
+    # 按品类（多品类批次）
+    bycat = defaultdict(list)
+    for r in ok:
+        if r.get("cat"):
+            bycat[r["cat"]].append(r)
+    if bycat:
+        print("\n--- 按品类 ---")
+        for cat in sorted(bycat):
+            g = bycat[cat]
+            gh = [r for r in g if r["live"] <= th]
+            avg = sum(r["live"] for r in g) / len(g)
+            print("  %-8s %2d 张  达标 %2d (%.0f%%)  平均 %.2f%%"
+                  % (cat, len(g), len(gh), 100.0 * len(gh) / len(g), avg))
     print("\n--- 按簇 ---")
     byc = defaultdict(list)
     for r in ok:
@@ -178,11 +194,11 @@ def main():
             L.append("| %s | %d | %s |" % (k, len(b[k]),
                                           " ".join(x["key"] for x in b[k])))
     L += ["", "## 逐张明细", "",
-          "| KEY | 原图 | 域/簇 | 文字元素 | 活字% | 像素% | PSNR |",
-          "|---|---|---|---|---|---|---|"]
+          "| KEY | 品类 | 原图 | 域/簇 | 文字元素 | 活字% | 像素% | PSNR |",
+          "|---|---|---|---|---|---|---|---|"]
     for r in rows:
-        L.append("| %s | %s | %s/%s | %d | %s | %s | %s |" % (
-            r["key"], r["name"], r["dom"], r["cluster"], r["n_text"],
+        L.append("| %s | %s | %s | %s/%s | %d | %s | %s | %s |" % (
+            r["key"], r.get("cat", ""), r["name"], r["dom"], r["cluster"], r["n_text"],
             ("%.2f" % r["live"]) if r["live"] is not None else "—",
             ("%.2f" % r["px"]) if r["px"] is not None else "—",
             ("%.1f" % r["psnr"]) if r["psnr"] is not None else "—"))

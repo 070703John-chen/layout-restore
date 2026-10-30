@@ -26,10 +26,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jobs", type=int, default=None)
     ap.add_argument("--only", default=None)
+    ap.add_argument("--jobs-file", default="batch_jobs.json",
+                    help="任务清单文件名（pick.py --target N 时是 batch_jobs_N.json）")
     a = ap.parse_args()
 
     cfg = C.load_cfg()
-    jobs = C.load_jobs(cfg)
+    jobs = C.load_jobs(cfg, a.jobs_file)
     if a.only:
         keys = {k.strip() for k in a.only.split(",") if k.strip()}
         jobs = [j for j in jobs if j["key"] in keys]

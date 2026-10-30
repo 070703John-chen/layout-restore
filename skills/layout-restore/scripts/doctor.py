@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import glob
 import shutil
 import argparse
 
@@ -86,39 +87,57 @@ def main():
         bad += 1
 
     # 5.5 本机覆盖配置
-    if os.path.exists(os.path.join(C.SKILL, "config.local.yaml")):
-        print("%s本机配置  config.local.yaml 已加载" % OK)
+    lp = C.local_cfg_path()
+    if os.path.exists(lp):
+        print("%s本机配置  %s 已加载" % (OK, os.path.basename(lp)))
     else:
-        print("%s本机配置  没有 config.local.yaml（路径全靠 config.yaml，"
-              "仓库版是占位符）" % WARN)
+        print("%s本机配置  没有 %s（路径全靠 config.yaml，"
+              "仓库版是占位符）" % (WARN, os.path.basename(lp)))
 
-    # 6. 淘宝原图库
-    raw = C.path_of(cfg, "raw")
-    if not raw:
-        print("%s原图库  未配置（paths.raw —— 写进 config.local.yaml）" % BAD)
-        bad += 1
+    # 6. 原图库
+    #    多品类批次（multicat.cats）：按品类目录查，每个品类要有 main + secondary
+    mcats = C.g(cfg, "multicat.cats", {}) or {}
+    if mcats:
+        print("%s品类库  %d 个品类" % (OK, len(mcats)))
+        for ck, cs in mcats.items():
+            d = (cs or {}).get("dir", "")
+            nm = len(glob.glob(os.path.join(d, "main", "*.jpg"))) if d else 0
+            ns = len(glob.glob(os.path.join(d, "secondary", "*.jpg"))) if d else 0
+            label = (cs or {}).get("label", ck)
+            if nm and ns:
+                print("   %s %-8s 主 %d / 附 %d" % (OK, label, nm, ns))
+            else:
+                print("   %s %-8s 主 %d / 附 %d  ← 至少各要 1 张"
+                      % (BAD, label, nm, ns))
+                bad += 1
     else:
-        n = 0
-        for sub in ("main", "secondary", "pool"):
-            d = os.path.join(raw, sub)
-            if os.path.isdir(d):
-                n += len([f for f in os.listdir(d)
-                          if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
-        if n:
-            print("%s原图库  %s（%d 张）" % (OK, raw, n))
-        else:
-            print("%s原图库  %s（没图）" % (BAD, raw))
+        raw = C.path_of(cfg, "raw")
+        if not raw:
+            print("%s原图库  未配置（paths.raw —— 写进 config.local.yaml）" % BAD)
             bad += 1
+        else:
+            n = 0
+            for sub in ("main", "secondary", "pool"):
+                d = os.path.join(raw, sub)
+                if os.path.isdir(d):
+                    n += len([f for f in os.listdir(d)
+                              if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
+            if n:
+                print("%s原图库  %s（%d 张）" % (OK, raw, n))
+            else:
+                print("%s原图库  %s（没图）" % (BAD, raw))
+                bad += 1
 
-    # 7. 族聚类产物（选片要用）
-    for key, label in (("features", "特征表"), ("clusters", "簇表")):
-        p = C.path_of(cfg, key)
-        if p and os.path.exists(p):
-            print("%s%s  %s" % (OK, label, p))
-        else:
-            print("%s%s  %s（选片要用；先用 tb_family.py 生成）"
-                  % (BAD, label, p or "未配置"))
-            bad += 1
+    # 7. 族聚类产物（选片要用）；多品类批次走 pick_multicat.py，不需要
+    if not mcats:
+        for key, label in (("features", "特征表"), ("clusters", "簇表")):
+            p = C.path_of(cfg, key)
+            if p and os.path.exists(p):
+                print("%s%s  %s" % (OK, label, p))
+            else:
+                print("%s%s  %s（选片要用；先用 tb_family.py 生成）"
+                      % (BAD, label, p or "未配置"))
+                bad += 1
 
     # 8. 工程脚本（tb_run 等）
     proj = C.path_of(cfg, "project")
