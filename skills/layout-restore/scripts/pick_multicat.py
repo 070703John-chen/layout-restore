@@ -33,14 +33,70 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C
 
 
-def _load_feat_extractor(cfg, fast_ocr=True):
+def _text_proxy(img_bgr):
+    """⚡ **不用 OCR 的文本行估计器** —— 替代 rapidocr，输出同样格式的框列表。
+
+    为什么要有
+        feat_one 里的 `text_lines` / `text_cover` 依赖 OCR，
+        实测 **5.2s/张**（放大 2 倍后跑 rapidocr）→ 4 品类 221 张 ≈ 20 分钟，
+        而且本机 CPU 被交易系统 + AgentBus 占满，实际墙钟要 1 小时。
+        聚类只需要「**这块图文字多不多、排得密不密**」的粗信号，不需要认字。
+
+    怎么估
+        自适应阈值 → 连通块 → 筛出「扁而宽」的笔画块（宽高比 1.5~15）= 一行文字。
+        顺带按行合并（y 方向重叠 >50% 视为同一行）。
+
+    代价
+        `text_lines` / `text_cover` 是**估计值**，与 OCR 真值不完全一致。
+        → 只用于**聚类**（分组），不用于任何对外指标。
+    """
+    import cv2
+    import numpy as np
+    h, w = img_bgr.shape[:2]
+    if h < 20 or w < 20:
+        return []
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    bw = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                               cv2.THRESH_BINARY_INV, 25, 12)
+    bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE,
+                           cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3)))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(bw, 8)
+    boxes = []
+    min_h = max(6, int(h * 0.008))
+    for k in range(1, n):
+        x, y, bw_, bh, area = stats[k]
+        if bh < min_h or bh > h * 0.12:
+            continue
+        if bw_ < bh * 1.5 or bw_ > bh * 15:
+            continue
+        if area < bh * bw_ * 0.12:
+            continue
+        boxes.append([x, y, x + bw_, y + bh, "", 1.0])
+    # 按 y 合并成行
+    boxes.sort(key=lambda b: b[1])
+    rows = []
+    for b in boxes:
+        placed = False
+        for r in rows:
+            if b[1] < r[3] - 0.3 * (r[3] - r[1]) and b[3] > r[1]:
+                r[0] = min(r[0], b[0])
+                r[1] = min(r[1], b[1])
+                r[2] = max(r[2], b[2])
+                r[3] = max(r[3], b[3])
+                placed = True
+                break
+        if not placed:
+            rows.append(list(b))
+    return rows
+
+
+def _load_feat_extractor(cfg, fast_ocr="proxy"):
     """取 12 维特征提取器（复用 tb_family.py 的 feat_one，单一事实源）。
 
-    ⚠ fast_ocr：给 ocr_lines 套一层「先缩到 max_side 再 OCR」的快通道。
-      原实现对小图会**放大 2 倍**再 OCR，大图跑满 2600px 宽 →
-      每张 3~5 秒 → 4 品类 221 张 ≈ 15 分钟，根本跑不完。
-      缩到 max_side=900 后 OCR 成本降到 1/4，特征语义不变：
-      `text_lines`（行数）和 `text_cover`（覆盖面积占比）都是尺度不敏感的。
+    ⚠ fast_ocr 三档：
+        "proxy"（默认）—— 用 _text_proxy 替掉 OCR，~20ms/张，特征语义近似
+        "scale"        —— 只缩图再 OCR（~2.2s/张），特征最准
+        "full"         —— 原样 OCR（~5.2s/张）
       ⚠ 这是**只读快通道**，不改 tb_family.py 原文件。
     """
     home = C.g(cfg, "paths.tbhome", "")
@@ -51,14 +107,16 @@ def _load_feat_extractor(cfg, fast_ocr=True):
         import tb_family
     except Exception as e:
         raise SystemExit("导入 tb_family 失败：%r" % (e,))
-    if fast_ocr:
+    if fast_ocr == "proxy":
+        tb_family.ocr_lines = _text_proxy
+    elif fast_ocr == "scale":
         import cv2
         orig = tb_family.ocr_lines
 
         def fast(img_bgr, zoom=1, min_conf=0.45):
             h, w = img_bgr.shape[:2]
-            if max(h, w) > 900:
-                s = 900.0 / max(h, w)
+            if max(h, w) > 700:
+                s = 700.0 / max(h, w)
                 img_bgr = cv2.resize(img_bgr, (int(w * s), int(h * s)),
                                      interpolation=cv2.INTER_AREA)
             return orig(img_bgr, zoom=1, min_conf=min_conf)
@@ -138,8 +196,15 @@ def _feats_for(cat, d, feat_one, cache_dir):
         if (i + 1) % 20 == 0:
             print("   ...%d/%d" % (i + 1, len(files)), flush=True)
     try:
+        # ⚠ 特征里有 numpy 标量（intc/float64），json 直接序列化会炸
+        #   → 用 default 钩子把 numpy 标量降成 python 标量
+        def _np2py(o):
+            if hasattr(o, "item"):
+                return o.item()
+            return str(o)
         json.dump({"files": files, "recs": recs},
-                  open(cp, "w", encoding="utf-8"), ensure_ascii=False)
+                  open(cp, "w", encoding="utf-8"), ensure_ascii=False,
+                  default=_np2py)
     except Exception as e:
         print("  缓存写入失败：%r" % (e,))
     return recs
@@ -150,6 +215,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--jobs-file", default="batch_jobs.json")
     ap.add_argument("--groups", type=int, default=None, help="每品类几个组")
+    ap.add_argument("--ocr", default="proxy", choices=["proxy", "scale", "full"],
+                    help="文本行特征算法：proxy=形态学估计(快) / scale=缩图OCR / full=原OCR")
     a = ap.parse_args()
 
     cfg = C.load_cfg()
@@ -163,7 +230,7 @@ def main():
     per_sec = C.g(cfg, "multicat.per_group_secondary", 2)
 
     global FEAT_NAMES
-    feat_one, FEAT_NAMES = _load_feat_extractor(cfg)
+    feat_one, FEAT_NAMES = _load_feat_extractor(cfg, a.ocr)
 
     jobs = []
     stats = []

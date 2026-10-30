@@ -109,6 +109,7 @@ input[type=search]{background:var(--panel2);border:1px solid var(--line);color:v
       <button class="f" data-f="附图">附图</button>
       <button class="f" data-f="art">艺术字</button>
     </div>
+    <div class="grp" id="catGrp"></div>
     <div class="grp">
       <span class="lbl">卡片右侧显示</span>
       <button class="gv on" data-v="live">活字版</button>
@@ -196,6 +197,7 @@ function view(){
   else if(S.filter==='bad') d=d.filter(x=>!isOk(x));
   else if(S.filter==='art') d=d.filter(isArt);
   else if(S.filter==='主图'||S.filter==='附图') d=d.filter(x=>x.dom===S.filter);
+  else if(S.filter&&S.filter.indexOf('cat:')===0) d=d.filter(x=>x.cat===S.filter.slice(4));
   if(S.q){ const q=S.q.toLowerCase();
     d=d.filter(x=>(x.key+x.name).toLowerCase().includes(q)); }
   if(S.sort==='diff') d.sort((a,b)=>(a.live??99)-(b.live??99));
@@ -218,7 +220,7 @@ function view(){
            <div class="badge ${okc?'ok':'bad'}">${fmt(x.live)}</div></div>
        </div>
        <div class="meta">
-         <span><b>${x.key}</b> · ${x.dom}簇${x.cluster}</span>
+         <span><b>${x.key}</b>${x.cat?' · '+x.cat:''} · ${x.dom}簇${x.cluster}</span>
          <span>字${x.n_text}</span>
        </div>`;
     c.onclick=()=>open(i);
@@ -250,7 +252,7 @@ function render(){
   const p=verPath(d);
   document.getElementById('lbT').textContent = d.key+'  '+d.name;
   document.getElementById('lbM').textContent =
-    `活字 ${fmt(d.live)} · 像素 ${fmt(d.px)} · PSNR ${d.psnr!=null?d.psnr.toFixed(1):'—'} · 文字元素 ${d.n_text} · ${d.dom}簇${d.cluster}`;
+    `活字 ${fmt(d.live)} · 像素 ${fmt(d.px)} · PSNR ${d.psnr!=null?d.psnr.toFixed(1):'—'} · 文字元素 ${d.n_text}${d.cat?' · '+d.cat:''} · ${d.dom}簇${d.cluster}`;
   imgA.onload=()=>{ fit(); };
   imgA.src=d.img_orig;
   imgB.src=p;
@@ -334,6 +336,19 @@ document.querySelectorAll('.f').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.f').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); S.filter=b.dataset.f; view();
 });
+/* 品类筛选（多品类批次才有）—— 按 DATA 里出现的 cat 自动生成 */
+(function(){
+  const cats=[...new Set(DATA.map(x=>x.cat).filter(Boolean))];
+  if(cats.length<2) return;
+  const g=document.getElementById('catGrp');
+  if(!g) return;
+  g.innerHTML='<span class="lbl">品类</span>'+
+    cats.map(c=>`<button class="f" data-f="cat:${c}">${c}</button>`).join('');
+  g.querySelectorAll('.f').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.f').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); S.filter=b.dataset.f; view();
+  });
+})();
 document.querySelectorAll('.s').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.s').forEach(x=>x.classList.remove('on'));
   b.classList.add('on'); S.sort=b.dataset.s; view();

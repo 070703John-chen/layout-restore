@@ -99,7 +99,8 @@ def collect_assets(cfg, jobs, out_root):
         key = j["key"]
         od = os.path.join(C.path_of(cfg, "out"), key)
         ent = {"key": key, "name": j["name"], "dom": j["dom"],
-               "cluster": j["cluster"], "src": j["src"]}
+               "cluster": j["cluster"], "src": j["src"],
+               "cat": j.get("cat", "")}
         pairs = [("orig", j["src"]), ("live", os.path.join(od, "_render_1x.png")),
                  ("px", os.path.join(od, "_render_px.png"))]
         hm = _find_heatmap(cfg, od, key, j)
