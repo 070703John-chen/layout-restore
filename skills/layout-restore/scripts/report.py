@@ -33,6 +33,27 @@ def bucket(v, th):
     return ">15%"
 
 
+def px_all(cfg, rows):
+    """全部文字都被 px 化的样本 —— 像素层版的 0% 差异是**构造出来的**，不是质量。
+
+    实测 47/62 交付样本是这种：每个字都换成原图裁切块，
+    像素层版当然逐像素相同 —— 但那是「没做活」，不能当达成度报出去。
+    """
+    out = []
+    for r in rows:
+        sp = C.spec_path(cfg, r["key"])
+        if not os.path.exists(sp):
+            continue
+        try:
+            s = json.load(open(sp, encoding="utf-8"))
+        except Exception:
+            continue
+        ts = s.get("text", [])
+        if ts and all(t.get("px") for t in ts):
+            out.append(r["key"])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=None, help="Markdown 报告路径")
@@ -64,6 +85,7 @@ def main():
     vok = [r for r in vf if r["verify_ok"]]
     art = [r for r in ok if (r["live"] is not None and r["live"] > th)
            and (r["px"] is not None and r["px"] <= th)]
+    trivial = px_all(cfg, ok)
 
     print("=" * 68)
     print("批量复刻 · 达标率")
@@ -88,6 +110,11 @@ def main():
     print("  艺术字（活字超差/像素达标）：          %d 张" % len(art))
     if art:
         print("    " + " ".join(r["key"] for r in art))
+    if trivial:
+        print("  ⚠ 全部文字已像素化的样本：              %d 张" % len(trivial))
+        print("    它们的像素层版 0% 差异是**构造出来的**（每字都换成原图裁切块），"
+              "不能当达成度报出去")
+        print("    " + " ".join(trivial[:30]) + (" …" if len(trivial) > 30 else ""))
 
     b = defaultdict(list)
     for r in ok:
@@ -138,6 +165,7 @@ def main():
          "| 像素层版达标率 | %d / %d = %.1f%% |"
          % (len(pxs), n, 100.0 * len(pxs) / max(1, n)),
          "| 艺术字（活字超差 / 像素达标） | %d |" % len(art),
+         "| ⚠ 全部文字已像素化（像素层 0% 是构造的） | %d |" % len(trivial),
          "| verify 包自洽率 | %d / %d = %.1f%% |"
          % (len(vok), len(vf), 100.0 * len(vok) / max(1, len(vf))),
          "", "## 分布", "", "| 区间 | 张数 | KEY |", "|---|---|---|"]

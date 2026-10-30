@@ -40,6 +40,33 @@ README = """# 对比站
 """
 
 
+def _find_heatmap(cfg, od, key):
+    """找差异热力图。
+
+    ⚠ 两条路径都要找（2026-10-30 实测：只找一条 → 50 张热力图全丢，
+      站点「差异热力图」按钮静默退化成显示活字版）：
+      ① out/<KEY>/deliver/<KEY>_像素级还原/   —— 公开仓库版引擎把交付写在这里
+      ② <paths.deliver>/<KEY>_像素级还原/    —— 共享引擎把交付写在这里（作品集）
+    """
+    cands = [os.path.join(od, "deliver")]
+    dl = C.g(cfg, "paths.deliver", "")
+    if dl:
+        cands.append(dl)
+    for root in cands:
+        if not root or not os.path.isdir(root):
+            continue
+        for sub in os.listdir(root):
+            if not sub.endswith("_像素级还原"):
+                continue
+            d = os.path.join(root, sub)
+            if not os.path.isdir(d):
+                continue
+            for f in os.listdir(d):
+                if f.endswith("_差异热力图_活字版.png"):
+                    return os.path.join(d, f)
+    return None
+
+
 def collect_assets(cfg, jobs, out_root):
     """把每张的原图/各版本图拷进 full/，并生成缩略。"""
     full = os.path.join(out_root, "full")
@@ -55,14 +82,7 @@ def collect_assets(cfg, jobs, out_root):
                "cluster": j["cluster"], "src": j["src"]}
         pairs = [("orig", j["src"]), ("live", os.path.join(od, "_render_1x.png")),
                  ("px", os.path.join(od, "_render_px.png"))]
-        hm = None
-        ddir = os.path.join(od, "deliver")
-        if os.path.isdir(ddir):
-            for sub in os.listdir(ddir):
-                if sub.endswith("_像素级还原"):
-                    for f in os.listdir(os.path.join(ddir, sub)):
-                        if f.endswith("_差异热力图_活字版.png"):
-                            hm = os.path.join(ddir, sub, f)
+        hm = _find_heatmap(cfg, od, key)
         if hm:
             pairs.append(("hm", hm))
         for tag, p in pairs:
