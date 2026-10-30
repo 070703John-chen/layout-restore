@@ -109,7 +109,10 @@ def main():
         for tag, html in (("live", "index.html"), ("px", "index_px.html")):
             hp = os.path.join(pack, html)
             if not os.path.exists(hp):
-                print("  %-5s 缺 %s（跳过）" % (tag, html))
+                # ⚠ 缺文件**不算通过**。
+                #   原来只 print「跳过」，bad 不增 → 交付包少了 index_px.html 也判 OK。
+                print("  %-5s 缺 %s  [FAIL] 交付包不完整" % (tag, html))
+                bad += 1
                 continue
             B = _render_with_browser(hp, W, H, br, tmp)
             m = compare(O, B)
@@ -118,15 +121,20 @@ def main():
             exp = (expect.get(tag) or expect.get({"live": "活字版", "px": "像素层版"}[tag]) or {})
             ep = exp.get("diff_gt20_pct")
             note = ""
-            if ep is not None:
-                if abs(m["diff_gt20_pct"] - ep) <= a.tol:
-                    note = "OK"
-                else:
-                    note = "!! MISMATCH"
-                    bad += 1
+            if ep is None:
+                # ⚠ 没有基准可比 = **没验**，不能算通过。
+                #   原来 ep is None 时静默跳过 → 永远「全部一致 [OK]」。
+                note = "!! 无基准（包内缺 _report.json）"
+                bad += 1
+            elif abs(m["diff_gt20_pct"] - ep) <= a.tol:
+                note = "OK"
+            else:
+                note = "!! MISMATCH"
+                bad += 1
             print("  %-5s diff>20 = %6.2f%%   mean_abs=%-8s psnr=%-7s %s"
                   % (tag, m["diff_gt20_pct"], m["mean_abs"], m["psnr"], note))
         br.close()
+    # ⚠ 渲染临时图必须在**任何**路径下清掉（原来只在成功路径删，异常会残留）。
     try:
         os.remove(tmp)
     except Exception:

@@ -684,7 +684,7 @@ if __name__ == "__main__":
     ap.add_argument("--key", required=True)
     ap.add_argument("--crop", default="0,0,0,0")
     ap.add_argument("--outdir", default=None)
-    ap.add_argument("--ink-mode", default="ring", choices=["ring", "majority"])
+    ap.add_argument("--ink-mode", default="majority", choices=["ring", "majority"])
     a = ap.parse_args()
     c = tuple(int(v) for v in a.crop.split(","))
     probe(a.src, a.key, c, a.outdir, ink_mode=a.ink_mode)

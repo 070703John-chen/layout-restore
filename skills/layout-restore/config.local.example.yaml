@@ -1,16 +1,32 @@
 # config.local.yaml —— 本机真实路径（**不入库**）
 #
-# 复制 config.yaml 后改这里。加载顺序：config.yaml → config.local.yaml（后者覆盖）。
+# 复制成 config.local.yaml 后改这里。
+# 加载顺序：DEFAULTS → config.yaml → config.local.yaml（后者覆盖前者）。
 # 放不进仓库的真实路径、token、账号都写这里。
 #
-# 格式示例：
+# ⚠ 仓库里的 config.yaml **必须**留空占位 —— 本文件才是真路径的载体。
+#   发布前有自检（tests/check_no_private_paths.py）会扫绝对路径残留。
+#
+# 格式示例（把 <> 里的换成你自己的绝对路径）：
 engine:
-  restore: "D:/云端全存档/设计作品集/04_生成与改稿/版式工程"
-  python: "D:/Python311/python.exe"
+  # 还原引擎目录：里面要有 probe_layers.py / autospec.py / rebuild.py
+  restore: "<你的还原引擎目录>"
+  # 唯一带 chromium 的 python（出图必须用它）
+  python: "<你的 python.exe 全路径>"
+
 paths:
-  raw: "D:/电商素材/LED灯/01_raw_taobao"
-  project: "D:/电商素材/设计中枢/15_淘宝复刻工程"
-  deliver: "D:/云端全存档/设计作品集/05_成品与源文件/主图"
-  features: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_features.json"
-  clusters: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_clusters.json"
-  verify: "D:/电商素材/设计中枢/16_开源项目/layout-restore/layout_restore/verify.py"
+  # 参考图库目录（下面通常有 main / secondary / pool）
+  raw: "<你的参考图库目录>"
+  # 工程根：specs / out / _work 都相对它解析
+  project: "<你的工程根目录>"
+  # 相对路径（相对 paths.project）
+  specs: "specs"
+  out: "out"
+  work: "_work"
+  # 成品交付根
+  deliver: "<你的交付根目录>"
+  # 版式族聚类产物（选片按簇配额用）
+  features: "<你的工程根>/_work/tb_features.json"
+  clusters: "<你的工程根>/_work/tb_clusters.json"
+  # 通用版 verify.py 的绝对路径（验收要它）
+  verify: "<克隆下来的仓库>/layout_restore/verify.py"

@@ -100,11 +100,20 @@ def g(cfg, dotted, default=None):
 
 
 def path_of(cfg, key):
-    """paths 段 → 绝对路径。相对路径以 paths.project 为基准。"""
+    """paths 段 → 绝对路径。相对路径以 paths.project 为基准。
+
+    ⚠ 未配置（空串）时返回 **空串**，不是 "." ——
+      返回 "." 会让脚本「拿着当前目录当路径」继续跑，
+      结果是跑到一半才发现文件不存在（2026-10-30 修）。
+    """
     v = g(cfg, "paths." + key, key)
+    if not v:
+        return ""
     if os.path.isabs(v):
         return os.path.normpath(v)
     base = g(cfg, "paths.project", os.getcwd())
+    if not base:
+        return os.path.normpath(v)
     return os.path.normpath(os.path.join(base, v))
 
 

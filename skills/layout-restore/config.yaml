@@ -4,31 +4,38 @@
 #   YAML 会把 `"""..."""` 当成一个标量，报 "expected '<document start>'"。
 #   （踩过：2026-10-29）
 #
-# 改这里 = 改数据；改 scripts/ = 改算法。
-# 所有路径都能相对 paths.project（默认 15_淘宝复刻工程）解析。
+# ⚠ **本文件必须不含任何本机绝对路径**（发布前有自检：tests/check_no_private_paths.py）。
+#   本机真实路径写进 `config.local.yaml`（同名同结构，**不入库**）。
+#   加载顺序：DEFAULTS → 本文件 → config.local.yaml（后者覆盖前者）。
+#
+# 改这里 = 改数据（阈值 / 选片策略 / 达标口径）；改 scripts/ = 改算法。
 
 engine:
-  # 还原引擎（探针 / 渲染 / 寻优 / 验收）
-  restore: "D:/云端全存档/设计作品集/04_生成与改稿/版式工程"
-  # 唯一带 chromium 的 python（出图必须用它）
-  python: "D:/Python311/python.exe"
+  # 还原引擎目录：里面要有 probe_layers.py / autospec.py / rebuild.py
+  # 留空 → doctor.py 会报「未配置」
+  restore: ""
+  # 唯一带 chromium 的 python（出图必须用它）。留空 → 用当前解释器
+  python: ""
 
 paths:
-  # 淘宝原图库（main / secondary / pool）
-  raw: "D:/电商素材/LED灯/01_raw_taobao"
-  # 工程根（下面 specs/out/_work 都相对它）
-  project: "D:/电商素材/设计中枢/15_淘宝复刻工程"
+  # 参考图库目录（下面通常有 main / secondary / pool 三个子目录）
+  raw: ""
+  # 工程根：specs / out / _work 都相对它解析
+  project: ""
+  # 相对路径（相对 paths.project）
   specs: "specs"
   out: "out"
   work: "_work"
   # 成品交付根（引擎的 deliver 步骤写这里）
-  deliver: "D:/云端全存档/设计作品集/05_成品与源文件/主图"
-  # 版式族聚类产物（选片要用：按簇配额，保证 50 张覆盖不同版式）
-  features: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_features.json"
-  clusters: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_clusters.json"
+  deliver: ""
+  # 版式族聚类产物（选片按簇配额用）
+  features: ""
+  clusters: ""
+  # 通用版 verify.py 的绝对路径（验收要它）
+  verify: ""
 
 batch:
-  # 并行进程数（本机 2 核 8G，2 最稳；再多会互相抢）
+  # 并行进程数（小机器 2 最稳；再多会互相抢）
   jobs: 2
   # 一批跑多少张
   target: 50

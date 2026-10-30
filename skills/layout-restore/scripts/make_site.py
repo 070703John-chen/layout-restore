@@ -40,30 +40,50 @@ README = """# 对比站
 """
 
 
-def _find_heatmap(cfg, od, key):
-    """找差异热力图。
+def _find_heatmap(cfg, od, key, job=None):
+    """找**这张图自己的**差异热力图。
 
-    ⚠ 两条路径都要找（2026-10-30 实测：只找一条 → 50 张热力图全丢，
-      站点「差异热力图」按钮静默退化成显示活字版）：
-      ① out/<KEY>/deliver/<KEY>_像素级还原/   —— 公开仓库版引擎把交付写在这里
-      ② <paths.deliver>/<KEY>_像素级还原/    —— 共享引擎把交付写在这里（作品集）
+    ⚠ 三条纪律（2026-10-30 实测踩坑，全部是「表面验收查不出来」的坑）：
+      ① 两条路径都要找（只找一条 → 50 张热力图全丢，按钮静默退化成显示活字版）：
+         a) out/<KEY>/deliver/<KEY>_像素级还原/   —— 公开仓库版引擎把交付写在这里
+         b) <paths.deliver>/<KEY>_像素级还原/    —— 共享引擎把交付写在这里（作品集）
+      ② **绝不能「找到第一个就用」**。按目录顺序取第一个 → 50 张卡片的差异热力图
+         **全是 M01 的**，49 张张冠李戴；而「文件都在 / 链接都对 / 数量 50/50」
+         这类表面验收 100% 通过，MD5 一比才暴露。
+         ⇒ 必须按 KEY 前缀精确命中交付包目录。
+      ③ 兜底：目录名对不上时，用**原图文件名主干**（如 tb_main_016）再找一次。
     """
     cands = [os.path.join(od, "deliver")]
     dl = C.g(cfg, "paths.deliver", "")
     if dl:
         cands.append(dl)
+
+    # ---- 主路径：按 KEY 精确命中交付包目录 ----
     for root in cands:
         if not root or not os.path.isdir(root):
             continue
         for sub in os.listdir(root):
-            if not sub.endswith("_像素级还原"):
-                continue
             d = os.path.join(root, sub)
             if not os.path.isdir(d):
+                continue
+            if not (sub == key + "_像素级还原" or sub.startswith(key + "_")):
                 continue
             for f in os.listdir(d):
                 if f.endswith("_差异热力图_活字版.png"):
                     return os.path.join(d, f)
+
+    # ---- 兜底：按原图文件名主干找（目录命名不统一时用） ----
+    stem = None
+    if job and job.get("name"):
+        stem = os.path.splitext(job["name"])[0]
+    if stem:
+        for root in cands:
+            if not root or not os.path.isdir(root):
+                continue
+            for dirpath, _dirs, files in os.walk(root):
+                for f in files:
+                    if f.startswith(stem + "_") and f.endswith("_差异热力图_活字版.png"):
+                        return os.path.join(dirpath, f)
     return None
 
 
@@ -82,7 +102,7 @@ def collect_assets(cfg, jobs, out_root):
                "cluster": j["cluster"], "src": j["src"]}
         pairs = [("orig", j["src"]), ("live", os.path.join(od, "_render_1x.png")),
                  ("px", os.path.join(od, "_render_px.png"))]
-        hm = _find_heatmap(cfg, od, key)
+        hm = _find_heatmap(cfg, od, key, j)
         if hm:
             pairs.append(("hm", hm))
         for tag, p in pairs:
@@ -136,7 +156,15 @@ def main():
     rows = {r["key"]: r for r in C.collect(cfg, [j["key"] for j in jobs])}
     out_root = os.path.abspath(a.out or os.path.join(
         C.path_of(cfg, "project"), C.g(cfg, "site.dir", "批量复刻50张_对比站")))
+    # ⚠ rmtree 是不可逆删除 —— 先确认这确实是个「站点目录」再删。
+    #   判据：目录里要么有 index.html，要么是空目录；否则说明 --out 指错了地方，
+    #   宁可报错也不要把它整个删了（2026-10-30 加的护栏）。
     if os.path.isdir(out_root):
+        names = set(os.listdir(out_root))
+        if not (names & {"index.html", "data.json", "full", "thumbs"}):
+            print("!! %s 不像站点目录（里面有：%s）" % (out_root, sorted(names)[:8]))
+            print("   为防误删，停止。换 --out 指定正确的目录。")
+            return 2
         shutil.rmtree(out_root)
     os.makedirs(out_root, exist_ok=True)
 
@@ -165,6 +193,30 @@ def main():
     print("站点 -> %s" % out_root)
     print("  %d 条 / %d 个文件 / %.1f MB" % (len(entries), n, size / 1048576.0))
     print("  打开：%s" % os.path.join(out_root, "index.html"))
+
+    # ---- 自检：热力图必须**逐张不同**（2026-10-30 踩过 49/50 张全是 M01 的）----
+    import hashlib
+    seen = {}
+    dup = []
+    for e in entries:
+        rel = e.get("img_hm")
+        if not rel:
+            continue
+        p = os.path.join(out_root, rel)
+        if not os.path.exists(p):
+            continue
+        h = hashlib.md5(open(p, "rb").read()).hexdigest()
+        if h in seen:
+            dup.append((e["key"], seen[h]))
+        else:
+            seen[h] = e["key"]
+    if dup:
+        print("!! 热力图张冠李戴 %d 处：" % len(dup))
+        for k, src in dup[:10]:
+            print("     %s 用的是 %s 的热力图" % (k, src))
+        print("   → _find_heatmap 没按 KEY 精确匹配，查它")
+        return 3
+    print("  热力图自检：%d 张，内容互不相同 [OK]" % len(seen))
     return 0
 
 

@@ -102,7 +102,20 @@ def main():
     print("\n降级 %d 处 -> %s" % (len(changed), spec_path))
     for c, r in changed:
         print("   %-20s %.1f%%" % (c, r))
-    return len(changed)
+    # ⚠ 退出码**恒为 0**（= 成功），降级信息写标记文件。
+    #   原来 `return len(changed)` → 退出码 = 降级处数（实测 26），
+    #   而调用方判的是 `if rc == 0 and "像素层" in out` → **恒为假**
+    #   ⇒ 像素层版从来没真正生成（index_px.html 里 0 张 px 素材），
+    #   但 build 照样 exit 0 并打印「验收」结论 —— 典型的「看起来成功、实际没做」。
+    #   （2026-10-30 实测定位）
+    marker = os.path.join(a.out, "_px_fallback.json")
+    try:
+        json.dump({"changed": len(changed),
+                   "items": [{"text": c, "rate": round(r, 2)} for c, r in changed]},
+                  open(marker, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    except Exception as e:
+        print("  标记写入失败 %s：%r" % (marker, e))
+    return 0
 
 
 if __name__ == "__main__":

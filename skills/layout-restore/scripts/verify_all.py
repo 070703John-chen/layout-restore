@@ -53,9 +53,16 @@ def main():
 
     pend = [j for j in jobs
             if os.path.exists(os.path.join(out_root, j["key"], "index.html"))]
+    skipped = [j for j in jobs
+               if not os.path.exists(os.path.join(out_root, j["key"], "index.html"))]
+    # ⚠ 跳过必须**报出来**：静默跳过 = 「看起来全跑了」，实际少验了一半。
+    if skipped:
+        print("跳过 %d 张（没产出 index.html）：%s"
+              % (len(skipped), " ".join(j["key"] for j in skipped)))
     running = []
     t0 = time.time()
     n = 0
+    fail = 0
     while pend or running:
         while pend and len(running) < n_jobs:
             j = pend.pop(0)
@@ -75,10 +82,19 @@ def main():
                 continue
             fh.close()
             n += 1
-            print("[%d/%d] %-5s rc=%d" % (n, len(jobs), j["key"], rc), flush=True)
+            if rc != 0:
+                fail += 1
+                print("[%d/%d] %-5s rc=%d  ✗ 不一致  日志 %s"
+                      % (n, len(jobs), j["key"], rc, log), flush=True)
+            else:
+                print("[%d/%d] %-5s rc=0  OK" % (n, len(jobs), j["key"]),
+                      flush=True)
         running = still
-    print("verify 结束，用时 %.1f 分钟" % ((time.time() - t0) / 60))
-    return 0
+    print("verify 结束，用时 %.1f 分钟；验 %d 张，失败 %d，跳过 %d"
+          % ((time.time() - t0) / 60, n, fail, len(skipped)))
+    # ⚠ 必须按失败数返回非 0 —— 原来无论多少张不一致都 return 0，
+    #   上层 pipeline / CI 完全看不出验收没过（2026-10-30 修）。
+    return 0 if fail == 0 else 1
 
 
 if __name__ == "__main__":

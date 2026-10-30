@@ -949,6 +949,13 @@ def deliver(rb, res):
         p = os.path.join(rb.out, f)
         if os.path.exists(p):
             shutil.copy(p, os.path.join(ADEST, f))
+    # ⚠ _report.json **必须**一起进源件包。
+    #   没有它 → verify 拿不到基准 → 不比对 → 交付包被改坏也照样判「全部一致 [OK]」。
+    #   实测：把交付包 index.html 字号 +17px（人为破坏），verify 仍报 OK、exit 0。
+    #   （2026-10-30 实测定位）
+    rp = os.path.join(DEST, "_report.json")
+    if os.path.exists(rp):
+        shutil.copy(rp, os.path.join(ADEST, "_report.json"))
     write_spec_doc(spec, rb, os.path.join(ADEST, "还原规格说明.md"))
     print("交付 ->", DEST)
     print("源件 ->", ADEST)
@@ -1050,10 +1057,15 @@ def run(spec_path, outdir, do_sweep=True, do_deliver=True):
         # 寻优结果回写进 spec（spec 即标定结果，可复现）
         json.dump(spec, open(os.path.join(outdir, "_spec.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
-        cal = os.path.join(os.path.dirname(os.path.abspath(outdir)), "specs",
-                           "%s_calibrated.json" % spec["key"].split("_")[0])
+        # ⚠ 标定结果落到**传入的 specs 目录**，文件名用**完整 key**。
+        #   原来落在 `dirname(outdir)/specs/`（不是 --specs 指的目录），
+        #   且文件名用 `key.split("_")[0]` → demo_param_card / demo_compare /
+        #   demo_brace_title 全部映射到同一个 `demo_calibrated.json`，
+        #   后跑的覆盖先跑的（2026-10-30 实测）。
+        cal = os.path.join(os.path.dirname(os.path.abspath(spec_path)),
+                           "%s_calibrated.json" % spec["key"])
         try:
-            os.makedirs(os.path.dirname(cal), exist_ok=True)
+            os.makedirs(os.path.dirname(os.path.abspath(cal)), exist_ok=True)
             json.dump(spec, open(cal, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         except Exception:
             pass

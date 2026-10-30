@@ -36,6 +36,8 @@ def vec(rec):
 
 def fps_select(recs, k):
     """最远点采样：挑 k 个互相差异最大的。"""
+    if k <= 0:
+        return []
     if k >= len(recs):
         return list(recs)
     X = np.array([vec(r) for r in recs])
@@ -54,8 +56,22 @@ def fps_select(recs, k):
 
 
 def allocate(total, sizes):
-    """按大小比例分配配额，每份至少 1。"""
+    """按大小比例分配配额，每份至少 1。
+
+    ⚠ 配额总和必须**严格等于** total。
+      原来 base = [max(1, total//n)]*n 在 total < n 时总和会**超过** total，
+      导致实际选出的张数比 --target 多（2026-10-30 修）。
+    """
     n = len(sizes)
+    if n == 0:
+        return []
+    total = max(0, int(total))
+    if total == 0:
+        return [0] * n
+    if n >= total:
+        # 簇比目标还多：只给前 total 个簇各 1 张
+        q = [1] * total + [0] * (n - total)
+        return q
     base = [max(1, total // n)] * n
     rem = total - sum(base)
     order = sorted(range(n), key=lambda i: -sizes[i])
@@ -64,6 +80,12 @@ def allocate(total, sizes):
         base[order[i % n]] += 1
         rem -= 1
         i += 1
+    # 兜底：确保总和 == total（防止浮点/取整误差）
+    while sum(base) > total:
+        for j in sorted(range(n), key=lambda i: -base[i]):
+            if base[j] > 0:
+                base[j] -= 1
+                break
     return base
 
 

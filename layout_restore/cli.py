@@ -119,11 +119,24 @@ def cmd_build(cfg, a):
         print("[%s] ok  %.0fs" % (name, time.time() - t0))
 
     # 像素层降级：字体替代还原不出来的大字 → 像素层
+    # ⚠ 判据读**标记文件**，不是退出码、也不是 stdout 关键字：
+    #   原来 pixel_fallback 的退出码 = 降级处数，`if rc == 0 and "像素层" in out`
+    #   恒为假 ⇒ 像素层版从没真正生成，但 build 照样 exit 0 并打印「验收」结论。
     rc, out = run_module("pixel_fallback",
                          ["--spec", spec_json, "--out", out_dir,
                           "--threshold", str(b.get("px_threshold", 18.0))])
-    if rc == 0 and "像素层" in out:
-        print("[pixel-fallback] 有降级，重跑 rebuild 出像素层版")
+    if rc != 0:
+        print("[pixel-fallback] 失败 rc=%d" % rc)
+        print(out[-3000:])
+        return rc
+    n_px = 0
+    marker = os.path.join(out_dir, "_px_fallback.json")
+    try:
+        n_px = int(json.load(open(marker, encoding="utf-8")).get("changed", 0))
+    except Exception:
+        n_px = 0
+    if n_px:
+        print("[pixel-fallback] 有降级（%d 处），重跑 rebuild 出像素层版" % n_px)
         rc2, out2 = run_module("rebuild",
                                ["--spec", spec_json, "--out", out_dir, "--no-sweep"])
         if rc2 != 0:
@@ -152,12 +165,17 @@ def cmd_probe(cfg, a):
 
 
 def cmd_autospec(cfg, a):
+    b = cfg.get("build", {})
+    # ⚠ 必须补传字体 —— 原来漏了，autospec 用默认字体（Noto Serif SC 宋体），
+    #   而电商促销大字是黑体：同一张图走 `autospec` 和走 `build` 的差异率能差 20%。
     rc, out = run_module("autospec",
                          ["--probe", a.probe, "--key", a.key,
                           "--name", a.name or a.key, "--src", os.path.abspath(a.src),
                           "--crop", a.crop, "--out", a.out,
-                          "--min-conf", str(cfg.get("build", {}).get("min_conf", 0.45)),
-                          "--cal-weight", "--cal-fill"])
+                          "--min-conf", str(b.get("min_conf", 0.45)),
+                          "--cal-weight", "--cal-fill",
+                          "--cjk-font", b.get("cjk_font", "Noto Sans SC"),
+                          "--latin-font", b.get("latin_font", "Noto Sans SC")])
     print(out)
     return rc
 

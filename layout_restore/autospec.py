@@ -165,8 +165,11 @@ def main():
         # 像素差在这里比在细字上可靠。
         if t.get("stroke"):
             cwid = t.get("stroke_w") or 2
+            # ⚠ 候选集必须覆盖真值的 2 倍以上：
+            #   原图描边**单侧**就有 4~5px，SVG stroke-width 是对称的 → 要到 8~10。
+            #   原来上限只有 6 → 大描边永远校不准（天花板卡死）。
             sweep.append({"marker": marker, "attr": "stroke-width",
-                          "values": sorted(set([1, 2, 3, 4, 5, 6, cwid])),
+                          "values": sorted(set([1, 2, 3, 4, 5, 6, 8, 10, 12, cwid])),
                           "region": reg, "score": "strokearea"})
         # 字重自动校准：电商图正文大多是常规字重，猜的 700/900 常偏粗。
         # 交给寻优按像素差异挑最接近的，而不是人肉改。
@@ -214,7 +217,8 @@ def main():
         "sweep": sweep,
         "_review": warns,
     }
-    os.makedirs(os.path.dirname(a.out), exist_ok=True)
+    # ⚠ dirname 可能是空串（--out spec.json 相对路径）→ makedirs('') 直接崩
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     json.dump(spec, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
     print("草稿已写：%s" % a.out)

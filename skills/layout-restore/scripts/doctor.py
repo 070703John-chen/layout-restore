@@ -94,31 +94,39 @@ def main():
 
     # 6. 淘宝原图库
     raw = C.path_of(cfg, "raw")
-    n = 0
-    for sub in ("main", "secondary", "pool"):
-        d = os.path.join(raw, sub)
-        if os.path.isdir(d):
-            n += len([f for f in os.listdir(d)
-                      if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
-    if n:
-        print("%s原图库  %s（%d 张）" % (OK, raw, n))
-    else:
-        print("%s原图库  %s（没图）" % (BAD, raw))
+    if not raw:
+        print("%s原图库  未配置（paths.raw —— 写进 config.local.yaml）" % BAD)
         bad += 1
+    else:
+        n = 0
+        for sub in ("main", "secondary", "pool"):
+            d = os.path.join(raw, sub)
+            if os.path.isdir(d):
+                n += len([f for f in os.listdir(d)
+                          if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))])
+        if n:
+            print("%s原图库  %s（%d 张）" % (OK, raw, n))
+        else:
+            print("%s原图库  %s（没图）" % (BAD, raw))
+            bad += 1
 
     # 7. 族聚类产物（选片要用）
     for key, label in (("features", "特征表"), ("clusters", "簇表")):
         p = C.path_of(cfg, key)
-        if os.path.exists(p):
+        if p and os.path.exists(p):
             print("%s%s  %s" % (OK, label, p))
         else:
-            print("%s%s  %s（选片要用；先用 tb_family.py 生成）" % (BAD, label, p))
+            print("%s%s  %s（选片要用；先用 tb_family.py 生成）"
+                  % (BAD, label, p or "未配置"))
             bad += 1
 
     # 8. 工程脚本（tb_run 等）
     proj = C.path_of(cfg, "project")
+    if not proj:
+        print("%s工程脚本  paths.project 未配置" % BAD)
+        bad += 1
     for f in ("tb_run.py", "tb_vec.py", "tb_px.py"):
-        if os.path.exists(os.path.join(proj, f)):
+        if proj and os.path.exists(os.path.join(proj, f)):
             print("%s工程脚本  %s" % (OK, f))
         else:
             print("%s工程脚本  %s" % (BAD, f))

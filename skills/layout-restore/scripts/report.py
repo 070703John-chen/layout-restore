@@ -165,7 +165,11 @@ def main():
          "| 像素层版达标率 | %d / %d = %.1f%% |"
          % (len(pxs), n, 100.0 * len(pxs) / max(1, n)),
          "| 艺术字（活字超差 / 像素达标） | %d |" % len(art),
-         "| ⚠ 全部文字已像素化（像素层 0% 是构造的） | %d |" % len(trivial),
+         # ⚠ 中文里的字面 % 必须写成 %% —— 否则 "0% 是构造的" 里的 %s 被当成格式符，
+         #   整份报告在**构造 L 列表时**就 ValueError 崩掉，
+         #   stdout 的数字还打完了（看着像成功），但 .md 根本没落盘。
+         #   2026-10-30 修（此前 batch_report.md 一直是旧文件，缺这一口径行）。
+         "| ⚠ 全部文字已像素化（像素层 0%% 是构造的） | %d |" % len(trivial),
          "| verify 包自洽率 | %d / %d = %.1f%% |"
          % (len(vok), len(vf), 100.0 * len(vok) / max(1, len(vf))),
          "", "## 分布", "", "| 区间 | 张数 | KEY |", "|---|---|---|"]
@@ -182,11 +186,14 @@ def main():
             ("%.2f" % r["live"]) if r["live"] is not None else "—",
             ("%.2f" % r["px"]) if r["px"] is not None else "—",
             ("%.1f" % r["psnr"]) if r["psnr"] is not None else "—"))
-    os.makedirs(os.path.dirname(md), exist_ok=True)
+    # ⚠ dirname 可能是空串（--out 报告.md 相对路径）→ makedirs('') 直接 FileNotFoundError
+    d = os.path.dirname(os.path.abspath(md))
+    os.makedirs(d, exist_ok=True)
     open(md, "w", encoding="utf-8").write("\n".join(L))
     print("\n报告 -> %s" % md)
 
     jp = a.json or os.path.join(C.path_of(cfg, "work"), "batch_metrics.json")
+    os.makedirs(os.path.dirname(os.path.abspath(jp)), exist_ok=True)
     json.dump(rows, open(jp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print("指标 -> %s" % jp)
     return 0
