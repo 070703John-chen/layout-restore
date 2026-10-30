@@ -193,6 +193,21 @@ def main():
         if k in b:
             L.append("| %s | %d | %s |" % (k, len(b[k]),
                                           " ".join(x["key"] for x in b[k])))
+    # 按品类（多品类批次才有）
+    bycat_md = defaultdict(list)
+    for r in ok:
+        if r.get("cat"):
+            bycat_md[r["cat"]].append(r)
+    if bycat_md:
+        L += ["", "## 按品类", "", "| 品类 | 张数 | 达标 | 达标率 | 平均差异% | 达标的 KEY |",
+              "|---|---|---|---|---|---|"]
+        for cat in sorted(bycat_md):
+            g = bycat_md[cat]
+            gh = [r for r in g if r["live"] <= th]
+            L.append("| %s | %d | %d | %.0f%% | %.2f | %s |" % (
+                cat, len(g), len(gh), 100.0 * len(gh) / max(1, len(g)),
+                sum(r["live"] for r in g) / len(g),
+                " ".join(r["key"] for r in sorted(gh, key=lambda x: x["live"]))))
     L += ["", "## 逐张明细", "",
           "| KEY | 品类 | 原图 | 域/簇 | 文字元素 | 活字% | 像素% | PSNR |",
           "|---|---|---|---|---|---|---|---|"]
