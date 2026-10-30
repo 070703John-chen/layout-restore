@@ -1,130 +1,131 @@
 ---
 name: layout-restore
-description: 把参考图（电商主图/附图、海报、详情页）拆成「照片层/矢量结构层/活字文字层」，产出可编辑的 HTML+CSS+SVG 源件包并做像素级验收。当需要复刻版式、把图改成可编辑源件、批量处理参考图、或诊断重建差异率偏高时使用。
-triggers:
-  - 复刻 版式
-  - 参考图 还原
-  - 主图 附图 还原
-  - 可编辑 源件包
-  - layout restore
-  - 像素级 还原
-  - 差异率 降不下来
-  - 批量 拆解 图
-  - 版式族
-keywords: 版式还原, 像素级还原, 可编辑源件包, 电商主图, 附图, 详情页, 三层模型, 照片层, 矢量结构层, 活字层, textLength, 寻优, sweep, 非文字区差异, diff_gt20_pct, 版式族, 配方, 跨底色, 取色, 局部底色, 厚度判据, 留出法, 像素层降级
+description: |
+  Restore e-commerce reference images (Taobao/Tmall main & secondary images, posters,
+  detail pages) into an EDITABLE source package — HTML + CSS + SVG, layered into
+  photo plate / vector structure / live text — then verify it pixel-by-pixel.
+  Use this skill when the user wants to 复刻 a layout, 还原 a 参考图, turn a flat
+  image into an editable source, batch-restore a set of reference images,
+  measure a 达标率, or diagnose why a reconstruction's diff rate is too high.
+  Trigger phrases include "复刻这批图", "批量还原", "还原成可编辑源件包",
+  "复刻一下原图", "layout restore", "pixel-accurate reconstruction".
+  Do NOT use it for: cropping/resizing a single photo (use an image library),
+  generating new artwork from scratch, designing vector illustrations, or
+  scraping/crawling reference images from e-commerce platforms.
+descriptions:
+  zh-Hans: |
+    把电商参考图（淘宝/天猫主图与附图、海报、详情页）还原成**可编辑源件包**
+    （HTML+CSS+SVG，拆成照片层/矢量结构层/活字文字层），并做像素级验收。
+    适用于：复刻版式、还原参考图、把平面图变成可编辑源件、批量复刻一批参考图、
+    统计达标率、诊断重建差异率为什么降不下来。
+    不适用于：单纯裁剪/改尺寸、原创画图、矢量插画设计、抓取电商平台素材。
+displayNames:
+  zh-Hans: "版式还原 · 批量复刻"
 ---
 
-# layout-restore Skill
+# layout-restore
 
-> **核心信条**：代码写「怎么判」· 配置写「判什么·在哪」· 状态板写「到哪了」。
-> 动手改引擎之前，先读完 [铁律](#铁律-动手前必读)。
+批量把参考图还原成**可编辑源件包**，并给出可复现的达标率。
 
-代码仓库：<https://github.com/070703John-chen/layout-restore>
-本 skill 是**薄壳**：命令怎么调、什么时候用、哪些坑不能踩。
+## Inputs to collect
 
----
+- **参考图在哪**：默认 `D:\电商素材\LED灯\01_raw_taobao`（`main` / `secondary`）。
+  用户给了别的目录就改 `config.yaml` 的 `paths.raw`。
+- **要几张**：默认 50（`batch.target`）。
+- **要什么产物**：可编辑源件包（默认）+ 成品 PNG + 差异热力图 + 对比网站。
+  缺省时按默认做，不必追问 —— 这些是这套流程的标准输出。
 
-## 一、什么时候用
+## Procedure
 
-| 场景 | 用法 |
-|---|---|
-| 有一张参考图，想变成**能改的**源件 | `build` |
-| 想把一张图**复刻**成同款（换内容不换版式） | `build` 一次 → 拿 `spec.json` 改内容 → 重渲 |
-| 手上一批同版式图，想**批量**处理 | 每张各自 `build`（**不要**复制坐标，见 `docs/03_版式族方法论.md`） |
-| 重建差异率高，想知道**卡在哪** | `verify` + 看热力图 + 查非文字区差异 |
-| 要做**新图**，参考图只提供版式 | `build` 拿 spec，改文案/换产品图 → 重渲 |
+1. **先自检** —— `python scripts/doctor.py`
+   原因：这套流水线依赖本机已装好的 Python 工具链（引擎 / playwright chromium / OCR /
+   原图库 / 族聚类产物）。缺任何一项，后面跑到一半才炸，浪费几十分钟。
+   缺 chromium 就先 `python -m playwright install chromium`。
 
----
+2. **选片** —— `python scripts/pick.py --target 50`
+   原因：随机抽 50 张会抽到一堆长得差不多的，达标率被相似图稀释，
+   测出来的数字代表不了跨版式的真实水平。
+   脚本按**版式簇配额**分配，簇内用**最远点采样**挑互相差异最大的。
 
-## 二、命令（就这几条）
+3. **批量复刻** —— `python scripts/run_batch.py --jobs 2`
+   原因：每张要跑完整链（探针 → spec → 矢量层 → 渲染寻优 → 像素层 → 交付），
+   单张 2~4 分钟，50 张约 110 分钟。**放后台跑，不要占前台。**
+   `jobs` 别开大：本机 2 核 8G，`2` 最稳。
 
-```bash
-cd <repo>
-export PYTHONIOENCODING=utf-8          # Windows 必须，否则中文/® 符号会让整轮崩
+4. **全量验收** —— `python scripts/verify_all.py`
+   原因：验收要验的是「客户拿到包之后打开的效果」，不是中间目录；
+   中间目录和交付包不一致时，中间目录的指标是**假的**。
 
-python -m layout_restore.cli build  --src <参考图> --key <名字>
-python -m layout_restore.cli probe  --src <参考图> --key <名字>    # 只看拆解对不对
-python -m layout_restore.cli verify --pack out/<名字>              # 从交付包重渲对账
-python -m layout_restore.cli status                                 # 状态板
-python -m layout_restore.cli overview --out overview.png --packs out
-python -m layout_restore.cli report   --out metrics.md --packs out
+5. **出指标** —— `python scripts/report.py`
+   原因：达标率必须报**三条口径**（交付 / 活字版 / 有效复刻），
+   单报一个会骗人（纯产品照差异率≈0 是因为没活干）。
+
+6. **出对比网站** —— `python scripts/make_site.py`
+   原因：用户要**逐张看清差别**。网站是「原图 | 还原图 横向并排」的卡片网格，
+   点开是可放大到 4× 的灯箱。静态长图看不了细节。
+
+7. **交付**：把对比站路径 + 三条口径数字 + 差异最大的几张 KEY 一起给用户。
+
+### 或者一键跑完
+
+`python scripts/pipeline.py` 串起上面全部。适合「从头到尾重做一遍」。
+
+### 单张复刻（只要一张）
+
+```powershell
+python scripts/run_batch.py --only M04
 ```
 
-装成命令后（`pip install -e .`）直接 `layout-restore build ...`。
+## Output contract
 
-**并行跑多个**：`build` 是单张。要批量就起多个进程，每个一个 `--key`，
-**输出各写各的日志文件**（别走 PIPE —— Windows 管道满了会死锁）。
+- `<paths.project>/out/<KEY>/index.html` —— **活字版，唯一编辑入口**
+- `<paths.project>/out/<KEY>/index_px.html` —— 像素层版（字形原图裁切）
+- `<paths.project>/out/<KEY>/_spec.json` —— 配方（坐标/色值/字号/字重/寻优记录）
+- `<paths.project>/out/<KEY>/deliver/` —— 1x/2x 成品 + 对比图 + 差异热力图 + 源件包
+- `<paths.project>/_work/batch_report.md` —— 三条口径达标率 + 分簇分析 + 逐张明细
+- `<paths.project>/批量复刻50张_对比站/index.html` —— 对比网站（双击即开，离线可用）
 
----
+汇报时**至少给这四个数**：交付达标率、活字版达标率、有效复刻达标率、verify 包自洽率。
 
-## 三、标准工作流
+## Failure handling
 
-```
-① probe          看拆解对不对（文字框/色块/美术层有没有误判）
-② build          完整链，拿到 spec + 双版本 + 热力图
-③ 读 spec        改文案 / 换图 / 调参数 —— 这就是「编辑」
-④ 重渲           python -m layout_restore.rebuild --spec specs/<key>.json --out out/<key>
-⑤ verify         从交付包重渲，对账
-```
+- **某张失败** —— 日志在 `<paths.project>/_work/logs/b_<KEY>.log`。
+  先看是不是编码问题（`UnicodeEncodeError` → 确认 `PYTHONIOENCODING=utf-8` 有没有注入），
+  再看是不是路径问题（中文路径 → `cv2.imread` 会失败，引擎已用 `np.fromfile` 绕过）。
+- **批量跑到一半卡住不动** —— 大概率是**死锁**：子进程输出走了 `PIPE` 而父进程最后才读，
+  Windows 管道缓冲约 64KB 写满就阻塞。本 skill 的脚本已改成**子进程直接写日志文件**。
+- **差异率高** —— 按这个顺序查，跳过任何一步都是浪费时间：
+  1. 非文字区差异率是不是 0.00%？不为 0 → 分层错了，先修分层，别碰寻优。
+  2. 是不是字体问题？把主视觉换成原图裁切块，残差掉下来 → 是**字体替代的天花板**。
+  3. 差异热力图上某一块特别红 → 那一块的结构没拆对。
+  4. 某行字变黑粗体 + 白色鬼影 → **跨底色**取色错误，见 `references/铁律.md` 第 5 条。
 
-**第 ③ 步是重点**：spec.json 就是配方，
-改 `text[].text` 改文案、改 `rects[].fill` 改色块颜色、改 `font` 换字体。
-引擎不用动。
+## References
 
----
+- `references/铁律.md` —— **踩坑换来的硬规则**（15 条）。改引擎或调参前先读。
+- `references/三层模型与版式族.md` —— 三层模型 + spec 结构 + 族怎么定怎么复用。
+- `references/环境与依赖.md` —— 依赖清单、脚本分工、产物落点、时间成本。
 
-## 四、诊断差异率高
+## Examples
 
-**按这个顺序查，跳过任何一步都是浪费时间：**
+**Input**：复刻这 50 张原图，我要能看到每张的差别。
+**Output**：`run_batch.py` 跑完 → `report.py` 给
+「交付达标率 49/50=98%、活字版 36/50=72%、有效复刻 24/38=63%、verify 50/50=100%」
+→ `make_site.py` 给出对比站路径，卡片是「原图｜活字版」横向并排，
+点开可放大到 4× 逐像素看。
 
-1. **非文字区差异率是不是 0.00%？**
-   不为 0 → 「哪些是素材、哪些是文字」判断错了 → 先修分层，别碰寻优。
-2. **是字体问题吗？**
-   把主视觉换成原图裁切块，残差掉下来 → 是**字体替代的天花板**，不是工程缺陷。
-3. **热力图上某一块特别红？**
-   → 那一块的结构没拆对 → 查该区域的 spec 元素。
-4. **某行字变成黑粗体 / 白色鬼影？**
-   → **跨底色**（文字压在色块边界上），见铁律 7。
+**Input**：为什么这张重建出来差 20%？
+**Output**：查 `out/<KEY>/_render_1x.png` 的热力图 → 残差集中在文字上 →
+该字是商业艺术字（无授权替代字体）→ 属素材限制，
+方案是把它归入美术素材层从原图裁切（代价：那处字不可编辑）。
 
----
+## Windows (win32) platform notes
 
-## 五、铁律（动手前必读）
+本 skill 只在 Windows PowerShell 下跑。所有命令用 `python`（不是 `python3`），
+路径含中文时 PowerShell 5.1 默认 GBK 编码会弄坏内容 —— 读文件用 Read 工具、
+写文件用 Write 工具，脚本内部一律显式 `encoding="utf-8"`。
 
-> 完整版见仓库 `docs/02_铁律.md`。这里是最容易踩的 6 条。
+子进程必须注入 `PYTHONIOENCODING=utf-8`（`common.py` 的 `child_env()` 已做）：
+引擎日志里有中文和 `®` 这类符号，GBK 控制台会 `UnicodeEncodeError` **整轮崩掉**。
 
-1. **挖字掩膜用「文字自身 fill 色」**，不用「与区域众数色差异大」。
-   众数色会被文字本身带偏 → 把色块底一起挖掉 → 渲出来是白块。
-
-2. **背景回填用「留出法」选算法**（inpaint vs 多项式）。
-   判据不能是「重建 vs 原图」—— 原图那格是**字**，越像字越"准"，是自欺欺人。
-
-3. **寻优的「当前值」必须进候选集**，否则越寻越差。
-
-4. **取色不能只用「离单一全局底色最远」**。
-   底色是**局部量**。文字跨底色时，最远的像素是**另一种底色**而不是字
-   → 字色取成底色 → 白字被画成深棕。
-   修法：局部底色 + 连续切分的硬边界检测 + **厚度仲裁**。
-   ⚠ **新判据先当仲裁者，不当主力**（当主力会让照片底上的字取浅）。
-
-5. **颜色相关代码必须用彩色样本验**。
-   灰白样本三通道相同，通道顺序写错也看不出来；一到红色系就整片挖不出来。
-
-6. **Windows 三坑**：中文路径用 `np.fromfile + cv2.imdecode`；
-   控制台必须 UTF-8（`sys.stdout.reconfigure` + `PYTHONIOENCODING`，两边都堵）；
-   子进程输出别走 `PIPE`（64KB 缓冲写满 → 死锁）。
-
----
-
-## 六、素材版权（硬要求）
-
-- **不要**用来源不明的电商平台图片当参考图 —— 那是别人的著作权。
-- 示例图请用 `examples/make_samples.py` **程序生成**（本仓库的三张都是）。
-- 用户自己的素材当然没问题。
-
----
-
-## 七、什么时候**不要**用这个工具
-
-- 只是想**裁剪/改尺寸** → 用 PIL 就够了，别起整条链
-- 参考图是**纯照片**（没有版式结构）→ 没有可拆的层，直接用原图
-- 需要**矢量图形设计**（插画、图标绘制）→ 这是拆解工具，不是画图工具
+删临时文件走可恢复的 `rm -- <target>`（mavis-trash），不要用 `Remove-Item`。

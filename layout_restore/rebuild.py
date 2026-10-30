@@ -46,6 +46,7 @@ import shutil
 # 这里强制 stdout 用 UTF-8（不改文件内容，只改控制台编码）。
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 import argparse

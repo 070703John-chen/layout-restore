@@ -1,0 +1,65 @@
+# layout-restore 批量流水线 · 配置
+#
+# ⚠ 这是 **YAML**，不要写 Python 的 `# -*- coding -*-` + docstring 头 ——
+#   YAML 会把 `"""..."""` 当成一个标量，报 "expected '<document start>'"。
+#   （踩过：2026-10-29）
+#
+# 改这里 = 改数据；改 scripts/ = 改算法。
+# 所有路径都能相对 paths.project（默认 15_淘宝复刻工程）解析。
+
+engine:
+  # 还原引擎（探针 / 渲染 / 寻优 / 验收）
+  restore: "D:/云端全存档/设计作品集/04_生成与改稿/版式工程"
+  # 唯一带 chromium 的 python（出图必须用它）
+  python: "D:/Python311/python.exe"
+
+paths:
+  # 淘宝原图库（main / secondary / pool）
+  raw: "D:/电商素材/LED灯/01_raw_taobao"
+  # 工程根（下面 specs/out/_work 都相对它）
+  project: "D:/电商素材/设计中枢/15_淘宝复刻工程"
+  specs: "specs"
+  out: "out"
+  work: "_work"
+  # 成品交付根（引擎的 deliver 步骤写这里）
+  deliver: "D:/云端全存档/设计作品集/05_成品与源文件/主图"
+  # 版式族聚类产物（选片要用：按簇配额，保证 50 张覆盖不同版式）
+  features: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_features.json"
+  clusters: "D:/电商素材/设计中枢/15_淘宝复刻工程/_work/tb_clusters.json"
+
+batch:
+  # 并行进程数（本机 2 核 8G，2 最稳；再多会互相抢）
+  jobs: 2
+  # 一批跑多少张
+  target: 50
+  # 探针取色模式：majority=电商图必需（深色标题条上的白字不会取反）
+  ink_mode: majority
+  # OCR 置信度下限
+  min_conf: 0.45
+  # 族级配方字体（电商促销大字是黑体，不是宋体）
+  cjk_font: "Noto Sans SC"
+  # 区域差异率 > 此值(%) → 该文字降级成像素层
+  px_threshold: 18.0
+  # 选片策略
+  pick:
+    # 主图全要（商业价值最高）
+    main_all: true
+    # 附图取几张（凑够 target）
+    secondary: 29
+    # 按版式簇分配配额（保证覆盖不同版式，别让相似图稀释达标率）
+    cluster_quota: true
+
+report:
+  # 达标口径：活字版 diff_gt20_pct ≤ 此值
+  pass_threshold: 8.0
+  # 「有效复刻」门槛：文字元素少于这个数的图多为纯产品照，
+  # 差异率≈0 是因为没活干，不能算作复刻能力的证明
+  real_text_min: 3
+
+site:
+  # 对比网站输出目录名（建在 paths.project 下）
+  dir: "批量复刻50张_对比站"
+  # 缩略图边长
+  thumb: 420
+  # 是否生成对比网站
+  enabled: true

@@ -174,6 +174,39 @@ tests/
 
 ---
 
+## Skill：把这套流程变成一条命令
+
+仓库自带一个 Mavis Skill（`skills/layout-restore/`），装上之后任何 session 里
+说「复刻这批图 / 批量还原 / 还原成可编辑源件包」就能直接跑。
+
+```powershell
+# 安装（复制到 agent 的 skill 目录）
+Copy-Item -Recurse skills\layout-restore "$env:USERPROFILE\.mavis\agents\mavis\skills\"
+
+# 自检：环境齐不齐
+python "$env:USERPROFILE\.mavis\agents\mavis\skills\layout-restore\scripts\doctor.py"
+
+# 一键全流程：选片 → 批量复刻 → 验收 → 指标 → 对比网站
+python "$env:USERPROFILE\.mavis\agents\mavis\skills\layout-restore\scripts\pipeline.py"
+```
+
+| 脚本 | 作用 |
+|---|---|
+| `doctor.py` | 环境自检（引擎 / chromium / OCR / 原图库 / 聚类产物逐项报） |
+| `pick.py` | 选片（按**版式簇配额** + 簇内最远点采样，不让相似图稀释达标率） |
+| `run_batch.py` | 批量复刻（并行 + 日志落文件 + 断点续跑） |
+| `verify_all.py` | 全量验收（从**交付源件包**重渲并与原图对账） |
+| `report.py` | 指标 + **三条口径**达标率 + 分簇分析 |
+| `make_site.py` | 对比网站（原图｜还原图 横向并排 + 4× 放大） |
+| `pipeline.py` | 一键串起全部 |
+
+Skill 正文只有 108 行（lint 通过），bulky 的背景知识在 `references/`：
+`铁律.md`（15 条踩坑换来的硬规则）、`三层模型与版式族.md`、`环境与依赖.md`。
+
+详见 [`docs/06_工程化沉淀与Skill.md`](docs/06_工程化沉淀与Skill.md)。
+
+---
+
 ## License
 
 MIT —— 见 [LICENSE](LICENSE)。

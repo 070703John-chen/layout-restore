@@ -18,6 +18,12 @@ r"""人工分层探针 · 统一版（R2~R6 用）
 """
 import os
 import sys
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 import json
 import argparse
 
