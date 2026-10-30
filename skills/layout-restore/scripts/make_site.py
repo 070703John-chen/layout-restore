@@ -58,7 +58,14 @@ def _find_heatmap(cfg, od, key, job=None):
     if dl:
         cands.append(dl)
 
-    # ---- 主路径：按 KEY 精确命中交付包目录 ----
+    # ---- 主路径：按 KEY **精确**命中交付包目录 ----
+    # ⚠ 必须**精确**，不能用 startswith（2026-10-31 实测踩坑）：
+    #   目录名 `POT01_1_像素级还原` 会 startswith("POT01_")，
+    #   于是 POT01（主图）拿到了 POT01_1（附图）的热力图 → 12/35 张张冠李戴。
+    #   而 LED 那批 KEY（M01/S01）没有下划线后缀 → 永远碰不到这个坑，
+    #   **只有多品类批次（KEY 带 _1/_2 后缀）才暴露**。
+    #   ⇒ 判定必须是「去掉 `_像素级还原` 后 == KEY」，不是前缀匹配。
+    SUF = "_像素级还原"
     for root in cands:
         if not root or not os.path.isdir(root):
             continue
@@ -66,7 +73,8 @@ def _find_heatmap(cfg, od, key, job=None):
             d = os.path.join(root, sub)
             if not os.path.isdir(d):
                 continue
-            if not (sub == key + "_像素级还原" or sub.startswith(key + "_")):
+            stem = sub[:-len(SUF)] if sub.endswith(SUF) else sub
+            if stem != key:
                 continue
             for f in os.listdir(d):
                 if f.endswith("_差异热力图_活字版.png"):
