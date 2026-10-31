@@ -107,8 +107,11 @@ def collect_assets(cfg, jobs, out_root):
         key = j["key"]
         od = os.path.join(C.path_of(cfg, "out"), key)
         ent = {"key": key, "name": j["name"], "dom": j["dom"],
-               "cluster": j["cluster"], "src": j["src"],
-               "cat": j.get("cat", "")}
+               "cluster": j["cluster"], "cat": j.get("cat", "")}
+        # ⚠ **不要写原图绝对路径**（2026-10-31 实测）：
+        #   站点要能打包发给别人看，data.json 里留着 `D:\...` 会泄露本机目录结构，
+        #   而且模板**根本没用到** src 字段（只用到 img_orig/img_live/img_px/img_hm）。
+        #   ⇒ 只留文件名。
         pairs = [("orig", j["src"]), ("live", os.path.join(od, "_render_1x.png")),
                  ("px", os.path.join(od, "_render_px.png"))]
         hm = _find_heatmap(cfg, od, key, j)
