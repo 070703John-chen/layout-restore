@@ -14,6 +14,10 @@ specs/
 .work/
 runs/
 *.log
+# 演示站的本机工作目录（jobs 清单）
+.demo_work/
+# 临时构建日志
+_build_*.log
 
 # 编辑器 / 系统
 .vscode/
