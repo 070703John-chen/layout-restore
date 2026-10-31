@@ -197,15 +197,16 @@ def main():
         if a.cal_fill:
             cands = [t["fill"]] + [c for c in (t.get("alts") or []) if c != t["fill"]]
             if len(set(cands)) > 1:
-                # 评分用「墨色」：候选笔画核心的中位色 vs 原图笔画核心的中位色
-                # ⚠ 跨底色的字改用像素差：「墨色」判据同样依赖全局底色。
-                if t.get("cross_bg"):
-                    sweep.append({"marker": marker, "attr": "fill",
-                                  "values": list(dict.fromkeys(cands)), "region": reg})
-                else:
-                    sweep.append({"marker": marker, "attr": "fill",
-                                  "values": list(dict.fromkeys(cands)), "region": reg,
-                                  "score": "inkcolor"})
+                # ★ 评分用**像素差**，不用「墨色」（2026-10-31 实测）：
+                #   「墨色」判据 = 候选笔画核心中位色 vs 原图笔画核心中位色，
+                #   但它依赖**纸底色判定** —— 纸底色一旦错（RGB 粗量化把深红底
+                #   拆成碎簇 → 判成近白），原图「墨色」就变成深色食物像素，
+                #   **所有候选得分完全一样**（实测都是 10）→ 白字选不出来。
+                #   像素差直接量「这个颜色渲出来最像原图」，
+                #   且同 region 的其它元素在所有候选里相同 → 不影响相对排序。
+                #   实测：白 3901 px vs 灰 4287 px → 正确挑出白 ✓。
+                sweep.append({"marker": marker, "attr": "fill",
+                              "values": list(dict.fromkeys(cands)), "region": reg})
 
     spec = {
         "key": a.key,

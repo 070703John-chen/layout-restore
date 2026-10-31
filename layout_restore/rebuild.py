@@ -694,13 +694,27 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
 
     # ---------------------------------------------------------- 墨量/墨色评分
     def _paper(self, region):
-        """区域里的「纸底色」= 区域内出现最多的量化色的中位色。"""
+        """区域里的「纸底色」= 区域内出现最多的量化色的中位色。
+
+        ⚠ 量化必须用 **HSV**，不能用 RGB//16（2026-10-31 实测）：
+           RGB//16 会把**同一个深红底**拆成 5 个碎簇（各 3~4%），
+           而近白单独占 17.7% 微弱胜出 → 纸底色被判成**近白**。
+           → 「墨色」判据（离纸底最远的那批像素）算成了深色食物像素
+           → inkcolor 评分对**所有候选给出同一个分数**（实测 10）
+           → 白字候选永远选不出来（7 张美食图全中）。
+           HSV 量化（h 12 档 / s 3 档 / v 3 档）会把深红的各个变体**合并成一簇**
+           （与探针的 dominant_colors 一致）→ 纸底色正确 → 评分恢复。
+        """
         x0, y0, x1, y1 = region
         reg = self.O[y0:y1, x0:x1].reshape(-1, 3)
         if len(reg) == 0:
             return np.array([255, 255, 255], np.int32)
-        q = reg // 16
-        key = q[:, 0] * 256 + q[:, 1] * 16 + q[:, 2]
+        hsv = cv2.cvtColor(reg.astype(np.uint8).reshape(-1, 1, 3),
+                           cv2.COLOR_RGB2HSV).reshape(-1, 3)
+        h = hsv[:, 0].astype(np.int32) // 15
+        s = np.clip(hsv[:, 1].astype(np.int32) // 85, 0, 2)
+        v = np.clip(hsv[:, 2].astype(np.int32) // 85, 0, 2)
+        key = h * 9 + s * 3 + v
         vals, counts = np.unique(key, return_counts=True)
         k = vals[int(np.argmax(counts))]
         med = np.median(reg[key == k], axis=0).astype(np.int32)

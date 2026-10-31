@@ -384,6 +384,7 @@ def ink_color(img_bgr, box, bg_ref=None, mode="ring"):
 
         # ---- 老路：「离全局背景最远」+ 字腔/描边分离 ----
         fill_g = ink_core_color(crop, bg_hex)
+        core_g = fill_g          # ★ 未被字腔/描边分离污染的「笔画核心色」
         stroke_g, stroke_w_g = None, 0
         if fill_g is not None:
             # 带描边的大字：描边色可能比填充色「离背景更远」，
@@ -421,6 +422,19 @@ def ink_color(img_bgr, box, bg_ref=None, mode="ring"):
         fill_dist = int(np.abs(fb - bg).max())
         # 备选色：其它离背景远的簇（供 fill 自动校准挑）
         alts = [(fill, 0, fill_dist)]
+        # ★★ 必须把「**笔画核心色**」也放进候选池（2026-10-31 实测）：
+        #   dominant_colors 只返回 top-8 簇，**细字的核心色常被挤出去**。
+        #   实测一个白字案例：框内簇 = [深红底, 棕, 浅灰, ...]，
+        #   **纯白（真字色）根本不在 top-8 里** → alts 没有白
+        #   → autospec 的 --cal-fill 寻优**没有正确色可选**
+        #   → 白字被定死成抗锯齿灰。
+        #   而 ink_core_color 算的正是「离背景最远像素的中位色」= 纯白 ✓。
+        #   ⇒ 把 core_g 补进候选，让**寻优按像素/墨色差自己挑**（比任何硬判据都稳）。
+        if core_g and core_g != fill:
+            cb = hex2bgr(core_g).astype(np.int32)
+            cd = int(np.abs(cb - bg).max())
+            if cd >= 50:
+                alts.append((core_g, 0, cd))
         for c, pct in cols[1:]:
             b = hex2bgr(c).astype(np.int32)
             d = int(np.abs(b - bg).max())
