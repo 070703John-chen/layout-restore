@@ -144,6 +144,13 @@ class Rebuild:
         self.A, self.W0, self.H0 = load_crop(spec["src"], spec.get("crop", [0, 0, 0, 0]))
         self.H, self.W = self.A.shape[:2]
         self.O = self.A.astype(int)
+        # 诊断开关：LAYOUT_RESTORE_DIAG_METRIC=1 → 寻优时打印 o_area / c_area
+        self._diag_metric = os.environ.get("LAYOUT_RESTORE_DIAG_METRIC", "") not in ("", "0")
+        # ★ 二分开关（回归定位用，定位完可删）：
+        #   NO_ARTMASK=1 → 关掉「美术素材抠字」（回到抠字前的老行为）
+        #   LEGACY_INK=1  → 把 _ink_stats 的 ref 解析改回 BGR（老行为）
+        self._no_artmask = os.environ.get("LAYOUT_RESTORE_NO_ARTMASK", "") not in ("", "0")
+        self._legacy_ink = os.environ.get("LAYOUT_RESTORE_LEGACY_INK", "") not in ("", "0")
 
     # ---------------------------------------------------------- 照片层
     def make_plate(self):
@@ -219,7 +226,15 @@ class Rebuild:
             if e_p < e_i - 0.5:
                 fill = self._poly_fill_elem(A, em, mask, t["box"])
                 if fill is not None:
-                    plate_bgr[em] = fill[em]
+                    # ★★★ 通道顺序（定位到的 P0 颜色 bug）★★★
+                    #   `_poly_local` 是在 **RGB** 数组（A 是 RGB）上拟合的，
+                    #   返回的 fill 也是 RGB；而 plate_bgr 是 **BGR**。
+                    #   ⇒ 直接 `plate_bgr[em] = fill[em]` = **R/B 整个对调**。
+                    #   现象：红色底板上的字区被填成**蓝色**字形残影
+                    #   （实测底色 RGB(212,48,46) → 字区残影 RGB(45,46,209)，
+                    #     G 不变、R↔B 互换 = 教科书式的通道交换）。
+                    #   ⇒ 这里必须先 RGB→BGR 再回填。
+                    plate_bgr[em] = fill[:, :, ::-1][em]
                     print("    %-12s 留出法 inpaint=%6.2f poly=%6.2f -> 多项式"
                           % (t["id"], e_i, e_p))
                     continue
@@ -228,6 +243,11 @@ class Rebuild:
 
         plate = cv2.cvtColor(plate_bgr, cv2.COLOR_BGR2RGB)
         Image.fromarray(plate).save(os.path.join(self.out, "assets", "plate.png"))
+        # ★ 存下来给 cut_art 用：美术素材块里要把**文字像素抠掉**，
+        #   否则原图文字被裁进 art 块（见 cut_art 的说明）。
+        self.P = plate
+        self.text_mask = mask
+        self.elem_masks = elem_masks
         return int((mask > 0).sum())
 
     def _win(self, box, m=44):
@@ -322,11 +342,90 @@ class Rebuild:
         return out
 
     # ---------------------------------------------------------- 美术素材
+    def _art_cover(self):
+        """每个文字元素被美术素材块覆盖的面积占比。
+
+        覆盖 ≥50% 的文字 = **原图上它就长在美术块上**（促销条上的大字、
+        标签小字、丝印字）⇒ 归美术素材层，不做活字。
+        """
+        arts = [[int(v) for v in b] for _, b in self.spec.get("art", [])]
+        out = {}
+        for i, t in enumerate(self.spec.get("text", [])):
+            x0, y0, x1, y1 = [int(v) for v in t["box"]]
+            area = max(1, (x1 - x0) * (y1 - y0))
+            cov = 0
+            for ax0, ay0, ax1, ay1 in arts:
+                ix0, iy0 = max(x0, ax0), max(y0, ay0)
+                ix1, iy1 = min(x1, ax1), min(y1, ay1)
+                if ix1 > ix0 and iy1 > iy0:
+                    cov += (ix1 - ix0) * (iy1 - iy0)
+            out[i] = min(1.0, cov / float(area))
+        return out
+
     def cut_art(self):
+        """裁美术素材块。
+
+        ★★★ 文字与美术块重叠时的正确处理（三轮实测定案）★★★
+
+        背景：美术块是**从原图裁下来的**，所以块里**自带原图文字**。
+        如果块上再画一层活字 → 同一位置两套字形 = **重影**。
+
+        两条路都试过：
+          ① 把块里的文字像素**抠掉**（用底板补）→ 重影没了，
+             但像素上比「原图直接贴」差 **+2.1pp**（实测 9.3% vs 7.2%），
+             因为底板重建 ≠ 原图像素。
+          ② **不画活字**，被盖住的文字直接归美术层（原图裁切）→
+             重影没有 ✅、像素 0 损失 ✅、代价是那一处字不可编辑。
+
+        ⇒ 选 ②：**覆盖 ≥50% 的文字归美术素材层**（用原图裁切贴回），
+          覆盖不足 50% 的仍然做活字，并把块里那一小块文字**抠掉**（避免半截重影）。
+
+        ⚠ 「重叠就整块丢弃」的旧规则会把水果/叶片这类装饰丢掉，
+          已改成面积占比判定。
+        """
+        cover = self._art_cover()
+        self._cover = cover
+        P = getattr(self, "P", None)
+        elems = getattr(self, "elem_masks", None)
+        covered = {i for i, c in cover.items() if c >= 0.5}
+        n_cut = 0
+        # ---- 被美术块盖住的文字 → 生成原图裁切，归美术层 ----
+        for i, t in enumerate(self.spec.get("text", [])):
+            if i not in covered:
+                continue
+            bx0, by0, bx1, by1 = [int(v) for v in t["box"]]
+            pad = 2
+            bx0 = max(0, bx0 - pad); by0 = max(0, by0 - pad)
+            bx1 = min(self.W, bx1 + pad); by1 = min(self.H, by1 + pad)
+            asset = "%s_art" % (t.get("id") or ("t%02d" % i))
+            Image.fromarray(self.A[by0:by1, bx0:bx1]).save(
+                os.path.join(self.out, "assets", asset + ".png"))
+            t["px_asset"] = asset
+            t["px_box"] = [bx0, by0, bx1, by1]
+            t["art_covered"] = True
+        # ---- 裁美术块：只抠「仍在做活字」的那部分文字的墨迹 ----
         for name, box in self.spec.get("art", []):
             x0, y0, x1, y1 = [int(v) for v in box]
-            Image.fromarray(self.A[y0:y1, x0:x1]).save(
+            crop = self.A[y0:y1, x0:x1].copy()
+            # NO_ARTMASK=1 → 跳过「美术素材抠字」，回到抠字前的老行为。
+            if (not getattr(self, "_no_artmask", False)) and P is not None and elems is not None:
+                m = np.zeros(crop.shape[:2], np.uint8)
+                for i, sub in enumerate(elems):
+                    if i in covered:
+                        continue          # 这一处归美术层，块里保留原图文字
+                    s = sub[y0:y1, x0:x1]
+                    if s.any():
+                        m = np.maximum(m, s)
+                if m.any():
+                    crop[m > 0] = P[y0:y1, x0:x1][m > 0]
+                    n_cut += int((m > 0).sum())
+            Image.fromarray(crop).save(
                 os.path.join(self.out, "assets", name + ".png"))
+        if n_cut:
+            print("  美术素材抠字：%d px（仍在做活字的那部分文字）" % n_cut)
+        if covered:
+            print("  归美术层（不画活字）：%d 个文字元素" % len(covered))
+        return n_cut
 
     # ---------------------------------------------------------- HTML
     def _used_families(self):
@@ -371,6 +470,14 @@ class Rebuild:
             arts.append('<img class="layer" src="assets/%s.png" style="left:%dpx;top:%dpx">'
                         % (name, x0, y0))
         for i, t in enumerate(self.spec["text"]):
+            # ★ 归美术层的文字（原图上就长在美术块上）→ 直接贴原图裁切，
+            #   **不画活字**（画上去就是重影）。
+            if t.get("art_covered"):
+                bx0, by0, bx1, by1 = t["px_box"]
+                arts.append('<img class="layer" src="assets/%s.png" '
+                            'style="left:%dpx;top:%dpx">'
+                            % (t["px_asset"], bx0, by0))
+                continue
             if px and t.get("px"):
                 bx0, by0, bx1, by1 = t["px_box"]
                 pximgs.append('<img class="layer" src="assets/%s.png" style="left:%dpx;top:%dpx">'
@@ -760,8 +867,19 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         if len(pix) == 0:
             return 0, None
         if ref is not None:
-            r = np.array([int(ref[5:7], 16), int(ref[3:5], 16),
-                          int(ref[1:3], 16)], np.int32)
+            # ★ 通道顺序：pix 是 **RGB**（self.O 来自 PIL），
+            #   ref 是 hex 字符串 —— 必须按 **RGB** 解析。
+            #   以前写成 [B,G,R]（BGR）⇒ 对**饱和色**（红字 #C4090C），
+            #   解析出来是 (12,9,196)，跟真实像素 (196,9,12) 差 184
+            #   → 超过 tol 90 → 掩膜全空 → **o_area = 0**
+            #   → 评分退化成「|c_area - 0| = c_area」→ 永远选**墨量最小**的候选
+            #   → 字重/描边一律选最细。近白色因为 R≈B 看不出错，才一直没人发现。
+            if getattr(self, "_legacy_ink", False):
+                r = np.array([int(ref[5:7], 16), int(ref[3:5], 16),
+                              int(ref[1:3], 16)], np.int32)
+            else:
+                r = np.array([int(ref[1:3], 16), int(ref[3:5], 16),
+                              int(ref[5:7], 16)], np.int32)
             dm = np.abs(pix.astype(np.int32) - r).max(axis=1)
             mask = dm < tol
             area = int(mask.sum())
@@ -807,11 +925,14 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         o_area, o_color = self._ink_stats(orig_pix, bg, ref=ref)
         cells = self._render_cells(cands, region)
         scores = []
+        c_areas = []
         for cell in cells:
             if cell is None:
                 scores.append(10 ** 9)
+                c_areas.append(-1)
                 continue
             c_area, c_color = self._ink_stats(cell.reshape(-1, 3), bg, ref=ref)
+            c_areas.append(c_area)
             if mode in ("inkarea", "fillarea", "strokearea"):
                 scores.append(abs(c_area - o_area))
             else:                                   # inkcolor
@@ -819,6 +940,13 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                     scores.append(10 ** 9)
                 else:
                     scores.append(int(np.abs(c_color - o_color).max()))
+        # ★ 诊断：把 o_area 和各候选的 c_area 一起打出来。
+        #   只看差值会骗人 —— 必须同时看到原值，
+        #   才能分清是「候选渲染不对」还是「判据本身偏了」。
+        if getattr(self, "_diag_metric", False):
+            print("    [metric] %-16s mode=%-11s ref=%-9s bg=%s o_area=%d c_areas=%s"
+                  % (str(marker)[:16], mode, ref, np.array(bg).tolist(),
+                     o_area, c_areas), flush=True)
         return scores
 
     def _score_candidates_fallback(self, cands, region):
@@ -905,15 +1033,50 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
 
     def _set_attr(self, html, marker, attr, value, occ=0):
         marker = _esc_marker(marker)
-        hits = list(re.finditer(r'<text[^>]*>' + re.escape(marker) + r'</text>', html))
+        pat = r'<text[^>]*>' + re.escape(marker) + r'</text>'
+        hits = list(re.finditer(pat, html))
         if len(hits) <= occ:
             return html
         m = hits[occ]
         el = m.group(0)
-        # 加上负向断言，避免 "x=" 误命中 "textLength=" 之类
-        new_el = re.sub(r'(?<![\w-])' + re.escape(attr) + r'="[^"]*"',
-                        '%s="%s"' % (attr, value), el, count=1)
-        return html[:m.start()] + new_el + html[m.end():]
+
+        # ★★ 同框多色字（clipPath 方案）会把同一句话渲染成 **N+1 个 <text>**：
+        #      1 个底层 base（整句，主色）+ N 个带 clip-path 的色层（各显示自己那段）。
+        #    以前只改 hits[occ] 那一个 → 其它副本的字号/基线/字重仍是旧值
+        #    → 同一句话出现**两层错位重影**（仓库移植任务发现）。
+        #    ⇒ 同一个 clipPath 分组（cp{元素号}_*）的副本必须**一起改**。
+        grp = None
+        cm = re.search(r'clip-path="url\(#cp(\d+)_', el)
+        if cm:
+            grp = cm.group(1)
+        else:
+            # base 层自己不带 clip-path —— 往后找同组的第一个副本
+            for h in hits[occ + 1:occ + 16]:
+                cm2 = re.search(r'clip-path="url\(#cp(\d+)_', h.group(0))
+                if cm2:
+                    grp = cm2.group(1)
+                    break
+        if grp is None:
+            # 加上负向断言，避免 "x=" 误命中 "textLength=" 之类
+            new_el = re.sub(r'(?<![\w-])' + re.escape(attr) + r'="[^"]*"',
+                            '%s="%s"' % (attr, value), el, count=1)
+            return html[:m.start()] + new_el + html[m.end():]
+
+        # 同组 = base 层 + 该组所有色层
+        gpat = r'clip-path="url\(#cp%s_[^"]*\)"' % re.escape(grp)
+        targets = [(m.start(), m.end())]
+        for h in hits:
+            if h.start() == m.start():
+                continue
+            if re.search(gpat, h.group(0)):
+                targets.append((h.start(), h.end()))
+        out = html
+        for s, e in sorted(targets, reverse=True):
+            seg = out[s:e]
+            new_seg = re.sub(r'(?<![\w-])' + re.escape(attr) + r'="[^"]*"',
+                             '%s="%s"' % (attr, value), seg, count=1)
+            out = out[:s] + new_seg + out[e:]
+        return out
 
     # ---------------------------------------------------------- 像素层版
     def make_px(self):

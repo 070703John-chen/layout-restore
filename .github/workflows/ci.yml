@@ -26,6 +26,12 @@ jobs:
       - name: No private paths / brands
         run: python tests/check_no_private_paths.py
 
+      # ⚠ 5 处引擎修复（通道顺序 / hex 解析 / 归美术层 / clipPath 组 / 存盘状态）
+      #   全是**静默**的 —— 改错了不报错，只会让还原变差。
+      #   这个自测把它们钉成断言，防止下次重构悄悄改回去。
+      - name: Engine fixes regression
+        run: python tests/test_rebuild_fixes.py
+
       - name: CLI smoke test
         run: python -m layout_restore.cli --help
 
