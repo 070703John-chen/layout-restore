@@ -21,12 +21,14 @@ dependencies = [
   "opencv-python>=4.6",
   "Pillow>=9.0",
   "playwright>=1.40",
-  "numpy>=1.23",
   "PyYAML>=6.0",
-  "rapidocr-onnxruntime>=1.3",
 ]
 
 [project.optional-dependencies]
+# OCR（自动读出参考图里的文字框）体积大、从 PyPI 拉得慢 ⇒ 做成**可选**。
+# 不装也能跑：probe_layers 已有 try/except 兜底，OCR 不可用时自动降级，
+# 只是「自动探针」少了一层，需要手工提供元素规格表。
+ocr = ["rapidocr-onnxruntime>=1.3"]
 dev = ["pytest>=7.0"]
 
 [project.scripts]

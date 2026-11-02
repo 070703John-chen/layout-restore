@@ -64,6 +64,8 @@ out/<KEY>/deliver/<KEY>_源件包/
 ```bash
 git clone <this-repo>
 cd layout-restore
+
+# 轻装（推荐先跑通）—— 不含 OCR
 pip install -r requirements.txt
 python -m playwright install chromium     # 出图需要，只装一次
 
@@ -82,6 +84,20 @@ python -m layout_restore.cli overview --out overview.png --packs out
 ```
 
 装成命令（`pip install -e .`）之后直接用 `layout-restore ...`。
+
+### OCR 是可选的
+
+`probe_layers` 的「自动探针」用 OCR 读出参考图里的文字框（坐标 / 色值 / 字号）。
+OCR 走 `rapidocr-onnxruntime`，它会连带拉 `onnxruntime`（约 200MB 解压），首次下载偏慢，
+所以**默认不装**。
+
+| 装法 | 命令 | 效果 |
+|---|---|---|
+| 轻装 | `pip install -r requirements.txt` | 全流程可跑；自动探针少一层，需手工提供元素规格表 |
+| 全装 | `pip install -r requirements.txt && pip install "rapidocr-onnxruntime>=1.3"` | 自动探针可用，自动读出文字层 |
+| 打包装 | `pip install -e ".[ocr]"` | 同上，OCR 作为 extra |
+
+不装 OCR 不会报错：`probe_layers` 已有兜底，OCR 不可用时自动降级。
 
 ### 一次 `build` 做了什么
 
