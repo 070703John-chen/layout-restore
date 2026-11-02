@@ -104,6 +104,126 @@ def dominant_colors(pixels, top=6, skip_black=True):
     return out
 
 
+def multi_color_spans(bgr, box, fill_hex, bg_hex, min_pct=4.0, min_dist=60):
+    """检测「同一个文本框里有第二种颜色」的**连续 x 段**。
+
+    返回 [(x0, x1, "#RRGGBB"), ...]，没有则返回 []。
+
+    判据链
+        ① 框内像素量化成簇
+        ② **背景簇** = 占比最大的那个（它不是字色）
+        ③ **字色候选** = 占比 ≥ min_pct% 且离背景 ≥ min_dist 的簇
+        ④ 候选 ≥2 个 → 这是多色字
+        ⑤ 对每个字色候选 → 找出它在 x 方向上的连续段
+
+    ⚠ 返回的是**所有**够长的色段（主色那段也在里面）：
+      渲染层（rebuild.build_html）用 clipPath 把整句按段分色渲染，
+      每个色段都用自己的真实颜色画一遍 —— 不依赖「谁当主色」，
+      因为两种颜色面积几乎相等时主色选择是**掷硬币**。
+    """
+    if not fill_hex or not bg_hex:
+        return []
+    x0, y0, x1, y1 = [int(v) for v in box]
+    H, W = bgr.shape[:2]
+    x0 = max(0, x0); y0 = max(0, y0); x1 = min(W, x1); y1 = min(H, y1)
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return []
+    crop = bgr[y0:y1, x0:x1].reshape(-1, 3)
+    q = (crop // 16).astype(np.int32)
+    key = q[:, 0] * 256 + q[:, 1] * 16 + q[:, 2]
+    vals, counts = np.unique(key, return_counts=True)
+    tot = float(len(crop))
+    # 各簇的 RGB 中位色 + 占比
+    clus = []
+    for i in range(len(vals)):
+        sel = crop[key == vals[i]]
+        med = np.median(sel, axis=0).astype(int)
+        clus.append({"rgb": med, "pct": 100.0 * counts[i] / tot,
+                     "n": int(counts[i])})
+    clus.sort(key=lambda c: -c["pct"])
+    bg_rgb = clus[0]["rgb"]
+    # ⚠ **通道顺序**：crop 是 BGR 数组；fill_hex/bg_hex 是 **RGB 十六进制**
+    #   （dominant_colors 里 `"#%02X%02X%02X" % (bgr[2], bgr[1], bgr[0])` 转回了 RGB）。
+    #   ⇒ 内部一律用 **BGR 三元组**比较，别混用（2026-11-02 栽过两次：
+    #   通道错 → 「同色深浅」没被过滤 → 满屏误报；真双色反而漏掉）。
+    def _hex2bgr(h):
+        return np.array([int(h[5:7], 16), int(h[3:5], 16), int(h[1:3], 16)], int)
+    fill_bgr = _hex2bgr(fill_hex)
+    bg_bgr = clus[0]["rgb"]          # 已是 BGR
+    # 字色候选：占比够 + 离背景够远
+    # ⚠ **必须包含主色自己**（2026-11-02 实测）：
+    #   这个框里两种颜色面积几乎相等（深棕 7.5% vs 绿 7.4%）→
+    #   「谁当主色」是**掷硬币**，两次跑给出不同 fill（#392307 ↔ #176B16）。
+    #   ⇒ 渲染层不能依赖 fill 选对谁：**每个色段都用自己的真实颜色画一遍**，
+    #     主色段只是恰好和 fill 一致而已。
+    cands = [c for c in clus
+             if c["pct"] >= min_pct
+             and int(np.abs(c["rgb"] - bg_bgr).max()) >= min_dist]
+    if not cands:
+        return []
+    # 逐列判定该列属于哪个字色簇 → 连续段
+    W2 = x1 - x0
+    # ⚠ **必须先 transpose 再 reshape**（2026-11-02 踩过）：
+    #   numpy reshape 是**行优先**，直接 reshape(W2, H2, 3) 会把像素**按行重排**，
+    #   得到的根本不是「逐列」→ 列分类全错 → 真双色一个都检测不出来。
+    colpix = bgr[y0:y1, x0:x1].transpose(1, 0, 2).reshape(W2, y1 - y0, 3).astype(int)
+    col_class = np.full(W2, -1, dtype=int)
+    for ci, c in enumerate(cands):
+        d = np.abs(colpix - c["rgb"][None, None, :]).max(axis=2)
+        hit = (d <= 24).any(axis=1)
+        col_class[hit & (col_class < 0)] = ci
+    # ★★ **小空隙填充**（2026-11-02 实测）：
+    #   一个词内部的**笔画之间**没有该色像素 → 列分类出现 13~17px 的空隙
+    #   → 「连续段」判定把一个完整的词切碎成 8 段（实测绿色 588 列被切成 8 段）
+    #   → 段长都不够 min_len → 整个次色段丢失。
+    #   ⇒ 把长度 ≤ gap_tol 的「无色空隙」填成两侧的颜色。
+    gap_tol = max(8, int(0.035 * W2))
+    ci = 0
+    while ci < W2:
+        if col_class[ci] >= 0:
+            ci += 1
+            continue
+        j = ci
+        while j < W2 and col_class[j] < 0:
+            j += 1
+        if (j - ci) <= gap_tol and ci > 0 and j < W2 \
+                and col_class[ci - 1] == col_class[j]:
+            col_class[ci:j] = col_class[ci - 1]
+        ci = j
+    # 合并相邻同色段
+    segs = []
+    ci = 0
+    while ci < W2:
+        if col_class[ci] < 0:
+            ci += 1
+            continue
+        j = ci
+        while j + 1 < W2 and col_class[j + 1] == col_class[ci]:
+            j += 1
+        segs.append((ci, j + 1, col_class[ci]))
+        ci = j + 1
+    # ⚠ **连续大段**才算真次色（2026-11-02 实测）：
+    #   抗锯齿边缘会碎成很多 9~20px 的小段（同一灰度），
+    #   那是边缘噪声不是第二种字色 → 必须按「合并后的总长」过滤。
+    min_len = max(30, int(0.12 * W2))
+    spans = []
+    for a, b, ci in segs:
+        if (b - a) < min_len:
+            continue
+        c = cands[ci]
+        spans.append([x0 + a, x0 + b,
+                      "#%02X%02X%02X" % (int(c["rgb"][2]), int(c["rgb"][1]),
+                                          int(c["rgb"][0]))])
+    # 合并同色相邻段（量化会有 ±1 误差导致断开）
+    merged = []
+    for s in spans:
+        if merged and merged[-1][2] == s[2] and s[0] - merged[-1][1] <= 12:
+            merged[-1][1] = s[1]
+        else:
+            merged.append(list(s))
+    return merged
+
+
 def ink_core_color(crop, bg_hex, frac=0.75):
     """取「笔画核心」的中位色作为字色。
 
@@ -115,6 +235,12 @@ def ink_core_color(crop, bg_hex, frac=0.75):
 
     正确做法：背景色已知 → 找**离背景最远**的那批像素（笔画核心）→ 取其中位色。
     不管它是不是纯黑。
+
+    ⚠ 2026-11-02 试过改成「众数簇」（理由是边缘像素可能比字心多），
+      **实测无收益且有回归**（浅底浅字案例：#F1F2ED → #050200，明显变差）。
+      原因：那行字本来就是**浅色字在浅底上**，「离底色最远」的一批里
+      浅色字心反而是主体。中位数在这里是对的。
+      ⇒ 保持中位数。**别凭猜测改判据，改了必须全量回归。**
     """
     b = np.array([int(bg_hex[5:7], 16), int(bg_hex[3:5], 16),
                   int(bg_hex[1:3], 16)], np.int32)
@@ -455,7 +581,12 @@ def ink_color(img_bgr, box, bg_ref=None, mode="ring"):
                 "stroke_w": stroke_w,
                 "fill_dist_bg": fill_dist, "n_colors": len(cols),
                 "cross_bg": cross, "split_x": split_x,
-                "alts": list(dict.fromkeys([a[0] for a in alts[:5]]))}
+                "alts": list(dict.fromkeys([a[0] for a in alts[:5]])),
+                # ★ 候选色**连同占比**一起给出（2026-11-02 新增）：
+                #   下游要靠「占比」判断框内是不是**真有两种颜色**
+                #   （例：一句话里两个词分别是两种颜色 —— 面积各约 11%）。
+                #   只给颜色列表的话，下游无法区分「第二种颜色」和「抗锯齿中间色」。
+                "alts_pct": [(a[0], a[1]) for a in alts[:5]]}
 
     if bg_ref is None:
         pad = max(4, int(0.4 * max(x1 - x0, y1 - y0)))
@@ -646,6 +777,14 @@ def probe(src, key, crop=(0, 0, 0, 0), outdir=None, ink_mode="ring"):
                      "cross_bg": (c or {}).get("cross_bg"),
                      "split_x": (c or {}).get("split_x"),
                      "src": bx["src"]})
+
+    # ★★ 同框多色字检测（2026-11-02 新增）
+    #   电商主图极常见：一句话里部分字是**彩色高亮**
+    #   （实测某主图一句话 = 深棕 + 绿 + 深棕）。
+    #   引擎是「一个 text = 一个 fill」的模型 → 彩色高亮**必然丢**。
+    #   ⇒ 找出「各个颜色的连续 x 段」，交给渲染层分色渲染。
+    for rw in rows:
+        rw["spans"] = multi_color_spans(bgr, rw["box"], rw.get("fill"), rw.get("bg"))
 
     # 建议字号：CJK 墨迹高 ≈ 字号；拉丁/数字 ≈ 0.72 字号
     for rw in rows:

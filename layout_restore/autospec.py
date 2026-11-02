@@ -104,6 +104,8 @@ def main():
             "font": guess_font(txt, h, a.cjk_font, a.latin_font),
             "tol": 45,
             "alts": row.get("alts") or [],
+            # ★ 同框多色字的色段（探针检出）→ 渲染层按段分色渲染
+            "spans": row.get("spans") or [],
             "bg": row.get("bg") or "#FFFFFF",
             "mask_mode": a.mask_mode,
         }
@@ -130,16 +132,23 @@ def main():
             pass
         texts.append(el)
 
-    # 美术素材候选：高饱和色块，且不与任何文字框重叠
+    # 美术素材候选：高饱和色块，且与文字框基本不重叠
     for i, b in enumerate(rep.get("blocks", [])):
         bx = [b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]]
-        hit = False
+        # ⚠ 重叠判定**不能是「有交集就整块丢弃」**（2026-11-02 实测）：
+        #   某图左上角的**柠檬**块 (0,41,178,241) 与标题文字框
+        #   (159,156,...) 只重叠 **19px**，却被判成「重叠」→ 整块放弃
+        #   → **柠檬在还原图里整个消失**，而像素差只占 0.26%（看起来像"画面没问题"）。
+        #   ⇒ 改成「重叠**面积占比** ≥ 50% 才算冲突」，部分重叠照收。
+        area = max(1, b["w"] * b["h"])
+        ov = 0
         for t in texts:
             tx0, ty0, tx1, ty1 = t["box"]
-            if bx[0] < tx1 and bx[2] > tx0 and bx[1] < ty1 and bx[3] > ty0:
-                hit = True
-                break
-        if hit:
+            ix0, iy0 = max(bx[0], tx0), max(bx[1], ty0)
+            ix1, iy1 = min(bx[2], tx1), min(bx[3], ty1)
+            if ix1 > ix0 and iy1 > iy0:
+                ov += (ix1 - ix0) * (iy1 - iy0)
+        if ov > 0.5 * area:
             continue
         if b["area"] < 2500:
             continue

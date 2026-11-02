@@ -409,7 +409,38 @@ class Rebuild:
                 a += ' font-family="%s,Noto Sans SC,sans-serif"' % t["font"]
             if t.get("italic"):
                 a += ' font-style="italic"'
-            texts.append('    <text %s>%s</text>' % (a, (t["text"] or "").replace("&", "&amp;")))
+            inner = (t["text"] or "").replace("&", "&amp;")
+            # ★★ 同框多色字：用 **SVG clipPath** 把整句渲染多遍，
+            #    每遍只显示自己那段颜色（后写的在上层）。
+            #    为什么必须这么做（2026-11-02 实测）：
+            #      引擎是「一个 text = 一个 fill」，而电商主图常见「一句话里部分字是彩色高亮」
+            #      （实测某主图一句话 = 深棕 + 绿 + 深棕）。
+            #      而且两种颜色**面积几乎相等**（7.5% vs 7.4%）→ 「谁当主色」是掷硬币，
+            #      两次跑给出不同 fill（实测 #392307 ↔ #176B16）→ 任何「主色+次色」方案都不可靠。
+            #    ⇒ 整句每种颜色都渲染一遍，用 clip 限定各自 x 段：
+            #      主色段显示主色，次色段被次色那层盖住 → 视觉与原图一致。
+            #    文字内容完整（每层都是整句），位置精确（clip 边界）。
+            spans = t.get("spans") or []
+            # ⚠ 只有**≥2 种颜色**才需要 clip 方案：
+            #   单色框也会检出 1 段（同色），多渲染一层纯属浪费。
+            if spans and len(set(s[2] for s in spans)) < 2:
+                spans = []
+            if spans:
+                base_a = a
+                texts.append('    <text %s>%s</text>' % (base_a, inner))
+                for si, sp in enumerate(spans):
+                    sx0, sx1 = int(sp[0]), int(sp[1])
+                    hexc = sp[2] if len(sp) > 2 else fill
+                    cid = "cp%d_%d" % (i, si)
+                    defs.append('<clipPath id="%s"><rect x="%d" y="%d" width="%d" '
+                                'height="%d"/></clipPath>'
+                                % (cid, sx0, t["box"][1], max(1, sx1 - sx0),
+                                   t["box"][3] - t["box"][1]))
+                    a2 = re.sub(r'fill="[^"]*"', 'fill="%s"' % hexc, base_a, count=1)
+                    a2 += ' clip-path="url(#%s)"' % cid
+                    texts.append('    <text %s>%s</text>' % (a2, inner))
+            else:
+                texts.append('    <text %s>%s</text>' % (a, inner))
         W, H = self.W, self.H
         defs_html = ("  <defs>%s</defs>\n" % "".join(defs)) if defs else ""
         return """<!DOCTYPE html>
