@@ -53,7 +53,7 @@ jobs:
           marker = json.load(open("out/demo_param_card/_px_fallback.json", encoding="utf-8"))
           assert marker["changed"] == len(px), \
               "标记的降级处数(%d) != px 素材数(%d)" % (marker["changed"], len(px))
-          rep = json.load(open(os.path.join(pack, "_report.json"), encoding="utf-8"))
+          rep = json.load(open("out/demo_param_card/_report.json", encoding="utf-8"))
           live = rep["live"]["diff_gt20_pct"]
           pxr = rep["px"]["diff_gt20_pct"]
           assert pxr < live, "像素层版(%.2f%%)没有优于活字版(%.2f%%)" % (pxr, live)
