@@ -101,8 +101,15 @@ def main():
         print("%s品类库  %d 个品类" % (OK, len(mcats)))
         for ck, cs in mcats.items():
             d = (cs or {}).get("dir", "")
-            nm = len(glob.glob(os.path.join(d, "main", "*.jpg"))) if d else 0
-            ns = len(glob.glob(os.path.join(d, "secondary", "*.jpg"))) if d else 0
+            # ⚠ 别只数 *.jpg —— 采集下来的附图有 .png（2026-10-31 漏统计过）
+            def _cnt(sub):
+                if not d:
+                    return 0
+                return len([f for f in glob.glob(os.path.join(d, sub, "*"))
+                            if f.lower().endswith((".jpg", ".jpeg", ".png",
+                                                    ".webp", ".bmp"))])
+            nm = _cnt("main")
+            ns = _cnt("secondary")
             label = (cs or {}).get("label", ck)
             if nm and ns:
                 print("   %s %-8s 主 %d / 附 %d" % (OK, label, nm, ns))

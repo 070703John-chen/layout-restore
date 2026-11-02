@@ -126,10 +126,17 @@ def _load_feat_extractor(cfg, fast_ocr="proxy"):
 
 
 def _cluster(X, kmin=2, kmax=6, seed=7):
-    """KMeans + 轮廓系数选 k。逻辑与 tb_family.py 保持一致。"""
+    """KMeans + 轮廓系数选 k。逻辑与 tb_family.py 保持一致。
+
+    ⚠ 样本太少时（< kmin+1，例如每品类只有 1 张主图）**没法聚类**，
+      返回 (1, -1, None) —— 调用方要处理 km is None，不能直接解包。
+      （2026-10-31 实测：浏览器采集批次每品类只有 1 张主图 → 这里崩了）
+    """
     from sklearn.cluster import KMeans
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import silhouette_score
+    if len(X) < kmin + 1:
+        return 1, -1, None
     Xs = StandardScaler().fit_transform(X)
     best = None
     for k in range(kmin, kmax + 1):
@@ -151,13 +158,23 @@ def _pick_groups(recs, n_groups, per_main, per_sec):
         return []
     X = np.array([[r[f] for f in FEAT_NAMES] for r in recs], dtype=float)
     k, sil, km = _cluster(X)
-    k = min(k, n_groups, len(recs))
+    if km is None:
+        # 样本太少 → 不聚类，全部归一组（每品类只有 1 个商品时走这条路）
+        return [list(recs)]
     groups = []
     for cid in range(k):
         idx = np.where(km.labels_ == cid)[0]
         members = [recs[i] for i in idx]
         groups.append(members)
     groups.sort(key=len, reverse=True)
+    # ⚠ 最大的簇可能不够 per_sec 个（样本少时常见，比如浏览器采集每品类只有 1 个商品）
+    #   → 从后面的簇里补，**凑满** per_sec，否则这批图会少选。
+    #   ⚠ 必须在 `groups[:n_groups]` **截断之前**补 —— 截断后 groups[1:] 就没了。
+    if groups and per_sec and len(groups[0]) < per_sec:
+        for extra in groups[1:]:
+            if len(groups[0]) >= per_sec:
+                break
+            groups[0].extend(extra)
     groups = groups[:n_groups]
     return groups
 
@@ -172,8 +189,10 @@ def _feats_for(cat, d, feat_one, cache_dir):
     cp = os.path.join(cache_dir, "feats_%s.json" % cat)
     files = {}
     for sub in ("main", "secondary"):
-        for f in sorted(glob.glob(os.path.join(d, sub, "*.jpg"))):
-            files[os.path.basename(f)] = f
+        # ⚠ 别只找 *.jpg —— 采集下来的图有 .png（2026-10-31 LED 那批 4 张附图漏了 3 张）
+        for f in sorted(glob.glob(os.path.join(d, sub, "*"))):
+            if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                files[os.path.basename(f)] = f
     if os.path.exists(cp):
         try:
             cached = json.load(open(cp, encoding="utf-8"))
@@ -261,10 +280,13 @@ def main():
             continue
 
         n = 0
+        # KEY 前缀：不同批次共用同一个工程根时，KEY 必须不撞
+        # （否则第二批会把第一批的 out/<KEY> 覆盖掉）。
+        kp = (spec or {}).get("key_prefix") or cat.upper()[:3]
         for gi, mgroup in enumerate(mains, 1):
             # 主图：组内最接近簇心的那张
             for j, rec in enumerate(mgroup[:per_main]):
-                key = "%s%02d" % (cat.upper()[:3], gi)
+                key = "%s%02d" % (kp, gi)
                 if j:
                     key += "_%d" % (j + 1)
                 jobs.append({"key": key, "src": rec["path"],
@@ -276,7 +298,7 @@ def main():
             # 附图：同编号的簇
             if gi - 1 < len(secs):
                 for j, rec in enumerate(secs[gi - 1][:per_sec]):
-                    key = "%s%02d_%d" % (cat.upper()[:3], gi, j + 1)
+                    key = "%s%02d_%d" % (kp, gi, j + 1)
                     jobs.append({"key": key, "src": rec["path"],
                                  "name": rec["name"], "dom": "附图",
                                  "cluster": "%s#%d" % (cat, gi),
