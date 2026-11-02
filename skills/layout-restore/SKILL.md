@@ -115,6 +115,27 @@ python scripts/run_batch.py --jobs-file batch_jobs.json
 python scripts/run_batch.py --only M04
 ```
 
+### 「这张为什么差」——自动定性
+
+```powershell
+python scripts/diag_why.py M04 S27 --crops out/_hotspots
+python scripts/diag_why.py --batch <work>/batch_jobs.json    # 整批
+```
+
+按「分区复算 → 文字区差异 → 是不是字体不可得」三步给出结论：
+
+| 结论 | 判据 | 能修吗 |
+|---|---|---|
+| 达标 | 整体 ≤ 阈值 | — |
+| 工程缺陷：分层/背景重建错 | **非文字区差异 ≥ 3%** | 能 |
+| 工程缺陷：字色/字重取错 | 文字区差异大 **且** 多个字整体偏深/偏浅 | 能 |
+| 工程缺陷：字号/字距错位 | 文字区差异 20~35%，非文字区干净 | 能 |
+| **素材限制：大字艺术字体不可得** | 有 ≥85px 的字 | 不能（除非走像素层） |
+| **素材限制：字形不可得** | 无大字但字形明显不同（产品丝印/装饰字体） | 不能 |
+
+⚠ **别单看「文字区差异率」**：实测一批里达标图的文字区差异也有 33~46%
+（字面积占比小，整体被稀释）。**判定要看整体 + 各区面积占比。**
+
 ## Output contract
 
 - `<paths.project>/out/<KEY>/index.html` —— **活字版，唯一编辑入口**

@@ -179,6 +179,11 @@ def metrics_path(cfg, key):
     return os.path.join(path_of(cfg, "out"), key, "_report.json")
 
 
+def out_dir(cfg, key):
+    """某个 KEY 的产物目录。"""
+    return os.path.join(path_of(cfg, "out"), key)
+
+
 def spec_path(cfg, key):
     return os.path.join(path_of(cfg, "out"), key, "_spec.json")
 
