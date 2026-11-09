@@ -1247,6 +1247,20 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         htmlp = os.path.join(self.out, "index.html")
         base = open(htmlp, encoding="utf-8").read()
         imgs = []
+        # ★★ 先清掉**上一轮**留下的 px_*.png（2026-11-09 实测）：
+        #   assets/ 目录从不清空 ⇒ 上一轮降级过的元素，这一轮不降级了，
+        #   它的 px_xx.png 就变成**陈旧文件**留在交付包里
+        #   （实测：spec 里 22 个降级元素，交付包 assets 里却躺着 23 张 px_*.png
+        #     → CI 的「标记数 == 素材数」断言直接红）
+        #   ⇒ 交付给客户的源件包里混着没人引用的素材 = 脏交付。
+        adir = os.path.join(self.out, "assets")
+        if os.path.isdir(adir):
+            for fn in os.listdir(adir):
+                if fn.startswith("px_") and fn.lower().endswith(".png"):
+                    try:
+                        os.remove(os.path.join(adir, fn))
+                    except OSError:
+                        pass
         for t in self.spec["text"]:
             if not t.get("px"):
                 continue
@@ -1310,6 +1324,14 @@ def deliver(rb, res):
               ensure_ascii=False, indent=2)
 
     # 源件包
+    # ⚠ 目标目录也要先清陈旧的 px_*.png（源目录清了还不够 ——
+    #   上一轮交付包里的旧素材还躺在那儿，源件包会越攒越多、且没人引用）
+    for fn in os.listdir(ADEST + "/assets"):
+        if fn.startswith("px_") and fn.lower().endswith(".png"):
+            try:
+                os.remove(os.path.join(ADEST, "assets", fn))
+            except OSError:
+                pass
     for f in os.listdir(os.path.join(rb.out, "assets")):
         shutil.copy(os.path.join(rb.out, "assets", f), os.path.join(ADEST, "assets", f))
     for f in ("index.html", "index_px.html", "_spec.json"):

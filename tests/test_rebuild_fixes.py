@@ -399,6 +399,41 @@ def test_ink_threshold_relative(tmp):
     return "墨量阈值相对化，深/浅字色数出同样墨量（%d）" % areas[0]
 
 
+def test_px_assets_no_stale(tmp):
+    """像素层素材**不能留陈旧文件**在交付包里。
+
+    实测事故（2026-11-09，CI「像素层真的生效了」这一步红了）：
+        标记的降级处数 = 22，但交付包 assets 里躺着 **23** 张 px_*.png
+        ⇒ assets/ 目录从不清空 ⇒ 上一轮降级过、这一轮不用降级的元素，
+          它的 px_xx.png 变成**没人引用的陈旧文件**，跟着交付包一起给了客户。
+    ⇒ 生成像素层素材前，先把上一轮的 px_*.png 清掉。
+    """
+    im = np.full((60, 90, 3), 245, np.uint8)
+    src = _save(im, os.path.join(tmp, "pxstale.png"))
+    spec = {
+        "key": "t_px", "name": "px", "src": src, "crop": [0, 0, 0, 0],
+        "art": [],
+        "text": [{"id": "t0", "text": "像素", "box": [10, 10, 60, 30],
+                  "base": 28, "size": 22, "weight": 300, "fill": "#333333",
+                  "bg": "#FAFAFA", "mask_color": "#333333", "pad": 0,
+                  "px": True, "px_asset": "px_t0", "px_pad": 2}],
+    }
+    rb = _new_rb(spec, tmp)
+    rb.make_plate()
+    html = rb.build_html()
+    open(os.path.join(rb.out, "index.html"), "w", encoding="utf-8").write(html)
+
+    stale = os.path.join(rb.out, "assets", "px_t99.png")
+    _save(np.full((10, 10, 3), 1, np.uint8), stale)
+    assert os.path.isfile(stale), "前置条件：先放一张陈旧的 px 素材"
+
+    rb.make_px()
+    assert not os.path.isfile(stale), "陈旧的 px 素材必须被清掉（不能混进交付包）"
+    cur = os.path.join(rb.out, "assets", "px_t0.png")
+    assert os.path.isfile(cur), "本轮的 px 素材必须生成"
+    return "陈旧 px 素材被清理（1 张残留已清）"
+
+
 # ------------------------------------------------------------------ main
 CASES = [
     ("1 归美术层（覆盖 >=50% 判定）", test_art_cover),
@@ -411,6 +446,7 @@ CASES = [
     ("8 寻优后描边复核", test_normalize_strokes),
     ("9 局部渲染平移所有图层", test_translate_art),
     ("10 墨量阈值相对化", test_ink_threshold_relative),
+    ("11 像素层素材不留陈旧文件", test_px_assets_no_stale),
 ]
 
 
