@@ -51,7 +51,17 @@ def guess_font(txt, h, cjk_font=None, latin_font=None):
         return "Noto Serif SC" if h > 30 else "Noto Sans SC"
     if latin_font:
         return latin_font
-    return "Century Gothic" if h > 30 else "Noto Sans SC"
+    if h > 30:
+        # 大字标题：Century Gothic 是商用字体，仓库不带；
+        # 使用者自己放了就能用（几何无衬线），没放就退到开源的 Playfair Display。
+        try:
+            from .rebuild import font_available
+            if font_available("Century Gothic"):
+                return "Century Gothic"
+        except Exception:
+            pass
+        return "Playfair Display"
+    return "Noto Sans SC"
 
 
 def main():

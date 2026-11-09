@@ -70,11 +70,28 @@ ROOT = os.environ.get("LAYOUT_RESTORE_ROOT", "")
 #   Noto Serif SC         —— 开源中文宋体，对应 R6 的「奢享纯净」
 FONTS = [
     ("NotoSansSC-VF.ttf", "Noto Sans SC", "100 900", "normal", "truetype"),
-    ("GOTHIC.TTF", "Century Gothic", "400 900", "normal", "truetype"),
     ("PlayfairDisplay.ttf", "Playfair Display", "100 900", "normal", "truetype"),
     ("PlayfairDisplay-Italic.ttf", "Playfair Display", "100 900", "italic", "truetype"),
     ("NotoSerifSC.ttf", "Noto Serif SC", "100 900", "normal", "truetype"),
 ]
+
+# ⚠ 商业字体**不入库**（Century Gothic / Bodoni MT 等是 Monotype 等厂商的商用字体，
+#   授权明确写「受许可协议约束、不得再分发」⇒ 进公开仓库等于侵权分发）。
+#   机制：字体文件可由使用者自己放到 assets/ 或 LAYOUT_RESTORE_FONTS 指向的目录，
+#   放了就用，没放就自动降级到仓库内自带的开源字体。
+#   ⇒ 判定必须看**文件是否真的存在**，不能只看注册表里有没有这一条。
+OPTIONAL_FONTS = {
+    "Century Gothic": "GOTHIC.TTF",   # 商业字体，仅本机自备时生效
+}
+
+
+def font_available(family):
+    """该 family 当前是否有可用的字体文件"""
+    if family in OPTIONAL_FONTS:
+        fn = OPTIONAL_FONTS[family]
+        return os.path.isfile(os.path.join(FONT_SRC, fn))
+    return any(fam == family for _fn, fam, _w, _s, _f in FONTS) and \
+        os.path.isfile(os.path.join(FONT_SRC, next(fn for fn, fam, _w, _s, _f in FONTS if fam == family)))
 FONT_FAMILY_ALIAS = {
     "Bodoni Bd BT": "Bodoni Bd BT",
     "Bodoni Bk BT": "Bodoni Bk BT",
@@ -91,9 +108,20 @@ def font_face_css(used=None):
     for fn, fam, wght, style, fmt in FONTS:
         if used is not None and fam not in used:
             continue
+        # 只为**真实存在**的字体文件生成 @font-face；
+        # 否则浏览器会 404 该 family 并静默回退到系统字体（不可控）。
+        if not os.path.isfile(os.path.join(FONT_SRC, fn)):
+            continue
         out.append('@font-face{font-family:"%s";src:url("assets/%s") format("%s");'
                    'font-weight:%s;font-style:%s;font-display:block}'
                    % (fam, fn, fmt, wght, style))
+    # 自备的商业字体（若使用者自己放了进来）
+    for fam, fn in OPTIONAL_FONTS.items():
+        if used is not None and fam not in used:
+            continue
+        if os.path.isfile(os.path.join(FONT_SRC, fn)):
+            out.append('@font-face{font-family:"%s";src:url("assets/%s") format("truetype");'
+                       'font-weight:400 900;font-style:normal;font-display:block}' % (fam, fn))
     return "\n".join(out)
 
 

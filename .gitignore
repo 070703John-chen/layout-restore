@@ -28,3 +28,8 @@ Thumbs.db
 # 本机真实路径（不入库）
 config.local.yaml
 skills/layout-restore/config.local.yaml
+
+# 商业字体（Monotype 等）：授权明确「不得再分发」⇒ 绝不入库。
+# 需要时由使用者自己放到 layout_restore/assets/ 或 LAYOUT_RESTORE_FONTS 指向的目录。
+layout_restore/assets/GOTHIC.TTF
+layout_restore/assets/*.TTC
