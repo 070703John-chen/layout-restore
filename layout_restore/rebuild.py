@@ -720,6 +720,36 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         m = re.search(r'(?<![\w-])' + re.escape(attr) + r'="([^"]*)"', el)
         return m.group(1) if m else None
 
+    def _elem_exists(self, html, marker, occ=0):
+        """HTML 里有没有第 occ 个 `<text ...>marker</text>` 元素。
+
+        ★ 没有 ⇒ 这个文字是「美术块」还原的（归美术层：原图裁片直接贴回，
+          **不画活字**）⇒ 它的字号/字重/字色**根本不存在于渲染里**
+          ⇒ 寻优改它等于改一个不存在的东西 ⇒ 所有候选同分。
+          实测（FD_CZ028_3）：整包 20 多项 sweep 全是这种 ⇒ 全同分。
+        """
+        pat = r'<text[^>]*>' + re.escape(_esc_marker(marker)) + r'</text>'
+        return len(list(re.finditer(pat, html))) > occ
+
+    @staticmethod
+    def _is_blind_sweep(scores):
+        """★ 盲寻优判据：所有候选得分**完全相同** ⇒ 该属性对那块区域**零影响**。
+
+        为什么会发生：那段文字被「美术块」整块盖住 —— 美术块是原图**原样裁回**，
+        文字压根没画在那一块 ⇒ 改字号/字重/字色对渲染没有任何影响 ⇒ 所有候选同分。
+
+        为什么要当成错误而不是"恰好都一样"：
+            旧逻辑用 `sc < best[1]`（严格小于）选最优 ⇒ 并列时**永远选第一个候选**
+            ⇒ 探测阶段测出来的值被**任意值**覆盖。
+            实测（2026-11-09，FD_CZ028_3）：整包 20 多项 sweep 全部同分 0 px，
+            所有属性都被写成候选列表的第一个值（font-weight=300 / font-size=33…）。
+        """
+        try:
+            s = [int(x) for x in scores]
+        except Exception:
+            return False
+        return len(s) >= 2 and max(s) == min(s)
+
     def sweep(self):
         """逐属性寻优：改一个属性 -> 重渲 -> 看该区域差异>20 的像素数 -> 取最小。
 
@@ -736,15 +766,26 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         h = open(htmlp, encoding="utf-8").read()
         for s in self.spec.get("sweep", []):
             vals = list(s["values"])
-            occ = int(s.get("occ", 0))
+            # ★★ 同一段文字出现多次时，必须按 tid 换算出 occ。
+            #    sweep 条目里带的是 **tid（元素号）**，不是 occ。
+            #    以前固定 occ=0 ⇒ 永远改第一个同文字元素 ⇒ 改 A 段、量 B 段 ⇒ 全同分。
+            occ = int(s.get("occ", 0)) if s.get("occ") is not None else \
+                self._occ_for_tid(s.get("tid"), s["marker"])
             cur = self._cur_attr(h, s["marker"], s["attr"], occ)
+            # ★ 这个文字在 HTML 里压根没有 ⇒ 它是「美术块」还原的（不画活字）
+            #   ⇒ 属性改不动它 ⇒ 这一项寻优**没有意义**，直接跳过。
+            if not self._elem_exists(h, s["marker"], occ):
+                print("  [跳过] %-16s %-12s：HTML 里没有第 %d 个「%s」活字元素"
+                      "（美术块还原的，属性改不动）⇒ 不参与寻优"
+                      % (s["marker"][:16], s["attr"], occ, s["marker"][:12]), flush=True)
+                continue
             if cur is not None and cur not in vals:
                 vals.append(cur)
             cands = [self._set_attr(h, s["marker"], s["attr"], v, occ) for v in vals]
             smode = s.get("score")
             if smode in ("inkarea", "inkcolor", "fillarea", "strokearea"):
                 scores = self._score_candidates_ink(cands, s["region"], smode,
-                                                    s.get("marker"))
+                                                    s.get("marker"), s.get("tid"))
             else:
                 scores = self._score_candidates(cands, s["region"], s["marker"], occ)
                 if scores is None:
@@ -754,6 +795,23 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                 print("    %-16s %-12s=%-8s : %6d px%s" %
                       (s["marker"][:16], s["attr"], v, sc,
                        "   <= 现值" if str(v) == str(cur) else ""), flush=True)
+            # ★★ 盲寻优守卫（2026-11-09 实测事故）：
+            #   所有候选得分**完全相同** ⇒ 这个属性**根本改不动**那块区域。
+            #   典型场景：这段文字被「美术块」整块盖住 —— 美术块是原图**原样裁回**，
+            #   文字压根没画在那一块 ⇒ 改字号/字重/字色对渲染**零影响**
+            #   ⇒ 所有候选同分。
+            #   旧逻辑 `sc < best[1]` 严格小于 ⇒ **并列时永远选第一个候选**
+            #   ⇒ 探测阶段（autospec）测出来的值被**任意值**覆盖。
+            #   实测（FD_CZ028_3）：整包 20 多个 sweep 项全部同分 0 px，
+            #   ⇒ 所有属性都被写成候选列表的第一个值（font-weight=300 / font-size=33…）。
+            #   ⇒ 正确做法：**保留现值**（探测阶段的值是有依据的），并告警。
+            if self._is_blind_sweep(scores):
+                print("  [盲寻优] %s %s：%d 个候选得分全等(%d) ⇒ 该属性改不动这块区域"
+                      "（多半是文字被美术块盖住）⇒ 保留现值 %s\n"
+                      % (s["marker"][:16], s["attr"], len(scores), scores[0], cur),
+                      flush=True)
+                continue
+            for v, sc, html in zip(vals, scores, cands):
                 if best is None or sc < best[1]:
                     best = (v, sc, html)
             open(htmlp, "w", encoding="utf-8").write(best[2])
@@ -819,7 +877,18 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         open(gp, "w", encoding="utf-8").write(page)
         outp = os.path.join(self.out, "_patch_sweep.png")
         page_obj = self._page(1)
-        page_obj.goto("file:///" + gp.replace("\\", "/"))
+        # ⚠ goto 的默认 30s 超时在机器负载高时会炸（实测：2 核机上同时跑 3 个
+        #   任务时必炸）。炸了之后候选会全打 0 px —— 看起来像「全部完美」，
+        #   其实是**页面根本没加载**。⇒ 放宽超时 + 改成 domcontentloaded
+        #   + 显式等图片加载完（patch 页只有内联 CSS 和 <img>，两者等价）。
+        page_obj.goto("file:///" + gp.replace("\\", "/"),
+                      wait_until="domcontentloaded", timeout=120000)
+        try:
+            page_obj.wait_for_function(
+                "() => Array.from(document.images).every(i => i.complete)",
+                timeout=120000)
+        except Exception:
+            pass
         try:
             page_obj.evaluate("async () => { await document.fonts.ready; }")
         except Exception:
@@ -834,7 +903,44 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                 out.append(None)
             else:
                 out.append(cell.astype(np.uint8))
+        self._guard_blank_cells(out, region)
         return out
+
+    def _guard_blank_cells(self, cells, region):
+        """★ 空白 cell 守卫：**候选全渲染成空白 ⇒ 页面没加载成功**，必须报错。
+
+        为什么必须报错而不是继续：
+            得分是「与原图差异 > 20 的像素数」，空白 cell 落在原图的纯色区时
+            得分是 0 —— 而 0 是**最好**的分数（完全一致）。
+            ⇒ 渲染失败会被当成「所有候选都完美」，
+            引擎挑第一个候选写进 HTML，**全程无任何异常**。
+            这正是本项目反复在修的那类静默缺陷。
+
+        判据（只在三者同时成立时触发，避免误伤正常情况）：
+            ① 所有候选 cell 都是**纯色**（渲染没画出东西）
+            ② 原图对应 region **不是**纯色（有内容）
+            ③ 至少有一个 cell
+        """
+        if not cells:
+            return
+        x0, y0, x1, y1 = region
+        orig = self.O[max(0, y0):max(0, y1), max(0, x0):max(0, x1)]
+        if orig.size == 0:
+            return
+        if orig.max(axis=2).min() == orig.max(axis=2).max():
+            return                                  # 原图这块也是纯色 ⇒ 0 分合理
+        blanks = 0
+        for c in cells:
+            if c is None:
+                blanks += 1
+                continue
+            if c.max(axis=2).min() == c.max(axis=2).max():
+                blanks += 1
+        if blanks == len(cells):
+            raise RuntimeError(
+                "候选渲染全部为空白（原图 region=%s 非纯色）⇒ 页面未加载成功"
+                "（资源缺失或渲染被掐断）。这不是「全部完美」，是渲染失败，"
+                "不能拿 0 分当最优解。" % (list(region),))
 
     def _translate_body(self, body, x0, y0):
         """把整页内容平移 (-x0,-y0)，让 region 落在窗口原点。"""
@@ -983,19 +1089,50 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         med = np.median(core, axis=0).astype(int)
         return area, med
 
-    def _elem_by_marker(self, marker):
+    def _elem_by_marker(self, marker, tid=None):
+        """按 **tid** 找元素；没有 tid 才退回按文字内容找。
+
+        ⚠ 同一段文字在一张图里出现多次时（电商图很常见：同一个「调味面制品」
+          在三个位置各出现一次），按文字内容找**永远只拿到第一个** ⇒
+          拿到的 fill/stroke 基准色是**别的元素**的 ⇒ 判据直接失明。
+        """
+        if tid:
+            for t in self.spec.get("text", []):
+                if t.get("id") == tid:
+                    return t
         for t in self.spec.get("text", []):
             if t.get("text") == marker:
                 return t
         return None
 
-    def _score_candidates_ink(self, cands, region, mode, marker=None):
+    def _occ_for_tid(self, tid, marker):
+        """★ tid → 该文字在 HTML 里的第几次出现（occ）。
+
+        HTML 里 <text> 的顺序 = spec["text"] 的顺序（build_html 按序输出），
+        所以「第几个同文字的元素」可以直接数出来。
+        没有这个换算：sweep 条目只带 tid（元素号），不带 occ
+        ⇒ `_set_attr(html, marker, attr, v, occ=0)` **永远改的是第一个**同文字元素
+        ⇒ 改的是 A 段，量的却是 B 段的区域 ⇒ 属性对被测区域**零影响**
+        ⇒ 所有候选同分（实测 FD_CZ028_3 整包 20 多项全 0 px）。
+        """
+        if not tid:
+            return 0
+        n = 0
+        for t in self.spec.get("text", []):
+            if t.get("text") != marker:
+                continue
+            if t.get("id") == tid:
+                return n
+            n += 1
+        return 0
+
+    def _score_candidates_ink(self, cands, region, mode, marker=None, tid=None):
         """按墨量 / 墨色 / 分色面积评分（不看像素差）。"""
         x0, y0, x1, y1 = region
         bg = self._paper(region)
         orig_pix = self.O[y0:y1, x0:x1].reshape(-1, 3)
         ref = None
-        elem = self._elem_by_marker(marker) if marker else None
+        elem = self._elem_by_marker(marker, tid) if (marker or tid) else None
         excl = None
         if mode == "fillarea" and elem:
             ref = elem.get("fill")

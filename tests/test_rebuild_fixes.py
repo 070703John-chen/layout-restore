@@ -434,6 +434,129 @@ def test_px_assets_no_stale(tmp):
     return "陈旧 px 素材被清理（1 张残留已清）"
 
 
+# ------------------------------------------------------------------ 12 空白 cell 守卫
+def test_blank_cell_guard(tmp):
+    """候选**全渲染成空白**时必须报错，不能当成「0 分 = 全部完美」。
+
+    实测事故（2026-11-09 生产重跑）：
+        Playwright 的 goto 默认 30s 超时，在 2 核机负载高时炸了
+        ⇒ 页面根本没加载 ⇒ 候选 cell 全是空白
+        ⇒ 得分（与原图差异 > 20 的像素数）= 0
+        ⇒ 而 0 是**最好**的分数 ⇒ 引擎挑第一个候选写进 HTML，**全程无异常**
+        ⇒ 错的属性值被静默写死。
+
+    守卫判据（三个同时成立才触发，避免误伤）：
+        ① 所有候选 cell 都是纯色      ② 原图 region 不是纯色      ③ 至少一个 cell
+    """
+    im = np.full((60, 90, 3), 250, np.uint8)
+    grad = np.tile(np.linspace(10, 120, 40), (20, 1)).astype(np.uint8)
+    im[10:30, 10:50] = grad[:, :, None]       # 原图这块是渐变（非纯色）
+    src = _save(im, os.path.join(tmp, "blankguard.png"))
+    spec = {"key": "t_blank", "name": "blank", "src": src, "crop": [0, 0, 0, 0],
+            "art": [], "text": []}
+    rb = _new_rb(spec, tmp)
+    region = [10, 10, 50, 30]
+
+    blank = np.full((20, 40, 3), 255, np.uint8)
+    raised = False
+    try:
+        rb._guard_blank_cells([blank, blank.copy()], region)
+    except RuntimeError:
+        raised = True
+    assert raised, "候选全空白 + 原图非纯色 ⇒ 必须抛错（不能静默当成 0 分最优解）"
+
+    # 反向：候选里有一个不是空白 ⇒ 不许抛错
+    ink = blank.copy()
+    ink[5:15, 5:20] = 10
+    rb._guard_blank_cells([blank.copy(), ink], region)   # 不抛错 = 通过
+
+    # 反向：原图那块是纯色 ⇒ 0 分是合理的，不许抛错
+    im2 = np.full((60, 90, 3), 250, np.uint8)
+    src2 = _save(im2, os.path.join(tmp, "blankguard2.png"))
+    spec2 = dict(spec, key="t_blank2", src=src2)
+    rb2 = _new_rb(spec2, tmp)
+    rb2._guard_blank_cells([blank.copy()], region)      # 不抛错 = 通过
+    return "空白候选被拦下（3 种情形：拦 1 / 放 2）"
+
+
+# ------------------------------------------------------------------ 13 盲寻优守卫
+def test_blind_sweep_guard(tmp):
+    """所有候选得分**全等**时，必须判定为「盲寻优」并**保留现值**。
+
+    实测事故（2026-11-09，生产重跑 FD_CZ028_3）：
+        那段文字被「美术块」整块盖住 —— 美术块是原图**原样裁回**，文字没画在那块
+        ⇒ 改字号/字重/字色对渲染**零影响** ⇒ 所有候选同分（实测整包 20 多项全 0 px）
+        ⇒ 旧逻辑 `sc < best[1]` 严格小于 ⇒ 并列时**永远选第一个候选**
+        ⇒ 探测阶段测出来的值被**任意值**覆盖（font-weight 被写成 300、font-size=33…）
+    ⇒ 判据：所有候选得分全等 ⇒ 跳过该项、保留现值。
+    """
+    from layout_restore.rebuild import Rebuild as _R
+    blind = _R._is_blind_sweep
+    assert blind([0, 0, 0, 0]) is True, "全等 ⇒ 必须判为盲寻优"
+    assert blind([5, 5, 5]) is True
+    assert blind([0, 1, 0]) is False, "有差异 ⇒ 不是盲寻优"
+    assert blind([3]) is False, "只有一个候选 ⇒ 不算盲（没得挑）"
+    assert blind([]) is False
+    assert blind([10 ** 9, 10 ** 9]) is True, "渲染失败的候选也属于全等 ⇒ 同样不能瞎挑"
+    return "盲寻优判据正确（全等=盲 / 有差异=不盲 / 单候选=不盲）"
+
+
+# ------------------------------------------------------------------ 14 同文字多元素定位
+def test_occ_for_tid(tmp):
+    """★ 同一段文字在图里出现多次时，sweep 必须按 **tid** 定位到第几个出现。
+
+    实测事故（2026-11-10，生产重跑 FD_CZ028_3）：
+        「调味面制品」在 1440×1440 的图里出现 **3 次**（t04 / t11 / t17），
+        sweep 条目里带的是 **tid（元素号）**、**没有 occ**。
+        以前 occ 固定取 0 ⇒ `_set_attr` **永远改的是第一个**（t04），
+        而被测的 region 是 t17 那块的 ⇒ 属性对被测区域**零影响**
+        ⇒ 所有候选同分（整包 20 多项全 0 px）
+        ⇒ 旧逻辑并列时挑第一个候选 ⇒ 整包属性被写成任意值。
+    """
+    im = np.full((60, 120, 3), 245, np.uint8)
+    src = _save(im, os.path.join(tmp, "occ.png"))
+    spec = {
+        "key": "t_occ", "name": "occ", "src": src, "crop": [0, 0, 0, 0],
+        "art": [],
+        "text": [
+            {"id": "t00", "text": "调味面制品", "box": [5, 5, 60, 25], "base": 25,
+             "size": 20, "weight": 300, "fill": "#111111", "bg": "#FAFAFA"},
+            {"id": "t01", "text": "调味面制品", "box": [5, 30, 60, 50], "base": 50,
+             "size": 20, "weight": 300, "fill": "#111111", "bg": "#FAFAFA"},
+            {"id": "t02", "text": "调味面制品", "box": [5, 55, 60, 75], "base": 75,
+             "size": 20, "weight": 300, "fill": "#111111", "bg": "#FAFAFA"},
+            {"id": "t03", "text": "别的字", "box": [70, 5, 110, 25], "base": 25,
+             "size": 20, "weight": 300, "fill": "#111111", "bg": "#FAFAFA"},
+        ],
+    }
+    rb = _new_rb(spec, tmp)
+    assert rb._occ_for_tid("t00", "调味面制品") == 0
+    assert rb._occ_for_tid("t01", "调味面制品") == 1, "同文字第 2 次 ⇒ occ=1"
+    assert rb._occ_for_tid("t02", "调味面制品") == 2, "同文字第 3 次 ⇒ occ=2"
+    assert rb._occ_for_tid("t03", "别的字") == 0
+    assert rb._occ_for_tid(None, "调味面制品") == 0
+    assert rb._occ_for_tid("不存在", "调味面制品") == 0
+
+    # 基准色也必须按 tid 取，不能拿别的元素的
+    e2 = rb._elem_by_marker("调味面制品", "t02")
+    assert e2 is not None and e2.get("id") == "t02", "必须按 tid 取元素"
+
+    # _set_attr 用算出来的 occ ⇒ 改的确实是第 N 个同文字元素
+    html = ('<text font-size="20">调味面制品</text>'
+            '<text font-size="20">调味面制品</text>'
+            '<text font-size="20">调味面制品</text>')
+    h2 = rb._set_attr(html, "调味面制品", "font-size", "33", occ=1)
+    sizes = re.findall(r'font-size="(\d+)"', h2)
+    assert sizes == ["20", "33", "20"], "只能改第 2 个，实际改了 %s" % sizes
+
+    # ★ HTML 里没有这个活字元素（美术块还原的）⇒ 必须判定为「不参与寻优」
+    assert rb._elem_exists(html, "调味面制品", 0) is True
+    assert rb._elem_exists(html, "调味面制品", 2) is True
+    assert rb._elem_exists(html, "调味面制品", 3) is False, "第 4 个不存在"
+    assert rb._elem_exists(html, "根本不存在的字", 0) is False
+    return "tid→occ 换算正确（0/1/2）+ set_attr 只改目标那一个 + 元素缺失可判"
+
+
 # ------------------------------------------------------------------ main
 CASES = [
     ("1 归美术层（覆盖 >=50% 判定）", test_art_cover),
@@ -447,6 +570,9 @@ CASES = [
     ("9 局部渲染平移所有图层", test_translate_art),
     ("10 墨量阈值相对化", test_ink_threshold_relative),
     ("11 像素层素材不留陈旧文件", test_px_assets_no_stale),
+    ("12 空白候选不得当成 0 分最优解", test_blank_cell_guard),
+    ("13 盲寻优（候选全同分）保留现值", test_blind_sweep_guard),
+    ("14 同文字多元素按 tid 定位", test_occ_for_tid),
 ]
 
 
