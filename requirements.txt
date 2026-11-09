@@ -1,7 +1,12 @@
 # 运行 layout-restore（最小依赖）
 numpy>=1.23
 opencv-python>=4.6
-Pillow>=9.0
+# ⚠ Pillow 必须**精确锁版本**，不能写 >=：
+#   示例图用的 NotoSansSC-VF.ttf 是**可变字体**，它的「默认实例」由渲染库挑，
+#   不同 Pillow 版本挑的实例不同（本机 9.5.0 挑的是 Thin 极细体）
+#   ⇒ 同一份代码在不同 Pillow 下渲染出的字形完全不同，示例图 md5 对不上。
+#   详见 skills/layout-restore/references/铁律.md 第 34 条。
+Pillow==9.5.0
 playwright>=1.40
 PyYAML>=6.0
 

@@ -1,12 +1,13 @@
 ﻿# -*- coding: utf-8 -*-
-"""引擎修复回归自测：把 5 处已验证修复钉成断言。
+"""引擎修复回归自测：把 7 处已验证修复钉成断言。
 
 为什么必须有这个测试
-    这 5 处修复全是**静默**的 —— 改错了不会报错、不会崩，只会让还原变差：
+    这些修复全是**静默**的 —— 改错了不会报错、不会崩，只会让还原变差：
       · 通道写反 → 底板出现蓝色字形残影（看着像「画面脏了」）
       · hex 按 BGR 解析 → 寻优判据退化，字重/描边永远选最细
       · 美术块不抠字 → 同一句话两层重影
       · clipPath 副本没一起改 → 同一句话两层错位重影
+      · 抗锯齿晕圈被当描边 → 描边寻优挑最大宽度 → 字糊成一块读不出来
     以前全靠「跑出来看着还行」才发现问题 ⇒ 必须有断言把它们钉死，
     否则下一次重构就会把它们悄悄改回去。
 
@@ -14,7 +15,7 @@
     python tests/test_rebuild_fixes.py
 
 退出码
-    0 = 5 处修复全部符合预期
+    0 = 全部修复符合预期
     1 = 有修复被改回去了（必须重做）
 """
 import os
@@ -248,6 +249,156 @@ def test_env_switches(tmp):
     return "3 个开关读写均生效"
 
 
+# ------------------------------------------------------------------ 7 假描边
+def test_false_stroke(tmp):
+    """抗锯齿晕圈不能被当成描边；同色描边必须丢（否则字被撑成糊块）。
+
+    实测事故（2026-11-09）：细体白字在米色底上，晕圈被探针判成「第二色 = 描边」，
+    描边宽度寻优又挑了最大值 12px → 22~36px 的字被描边糊成一块，**整行读不出来**。
+    """
+    from layout_restore import probe_layers as PL
+
+    bg = "#DCD3C7"
+    assert PL._is_blend_color("#F8F6F3", "#FCFAF9", bg), \
+        "白字的抗锯齿晕圈必须判成混色（不是描边）"
+    assert PL._is_blend_color("#736A5D", "#72685C", bg), \
+        "近色晕圈必须判成混色"
+    assert not PL._is_blend_color("#3A2F28", "#FCFAF9", bg), \
+        "真描边色（另一个色相）不能被判成混色"
+
+    # (b) 渲染层兜底：fill == stroke 时不发 stroke
+    im = np.full((80, 120, 3), 250, np.uint8)
+    src = _save(im, os.path.join(tmp, "stroke.png"))
+    spec = {
+        "key": "t_stroke", "name": "stroke", "src": src, "crop": [0, 0, 0, 0],
+        "art": [],
+        "text": [{"id": "t0", "text": "同色描边", "box": [10, 10, 90, 30],
+                  "base": 28, "size": 22, "weight": 300, "fill": "#7B7165",
+                  "stroke": "#7B7165", "stroke_w": 12, "mask_color": "#7B7165",
+                  "pad": 0}],
+    }
+    rb = _new_rb(spec, tmp)
+    rb.make_plate()
+    html = rb.build_html()
+    assert "stroke=" not in html, \
+        "fill==stroke 的描边必须不发（会把字撑胖、字形糊成一块）"
+
+    # (c) 描边打分要排除填充色本身，否则「描边越宽 → 得分越高」永远挑最大宽度
+    pix = np.array([[119, 106, 94]] * 3 + [[115, 104, 90]] * 3, np.int32)
+    area_all, _ = rb._ink_stats(pix, np.array([220, 211, 199]), ref="#7B7165")
+    area_ex, _ = rb._ink_stats(pix, np.array([220, 211, 199]), ref="#7B7165",
+                               exclude="#7B7165")
+    assert area_all == 6, "不加 exclude 时近色像素都算描边色，实得 %d" % area_all
+    assert area_ex == 0, "排除填充色后不该剩下描边色像素，实得 %d" % area_ex
+    return "混色判据 / 同色描边不发 / 描边打分排除填充色 三条都符合预期"
+
+
+# ------------------------------------------------------------------ 8 寻优后描边复核
+def test_normalize_strokes(tmp):
+    """寻优把字色改回白色后，那条「白字上的白描边」必须被摘掉。
+
+    实测事故（demo_param_card 横幅）：文字框右侧压着一个深色方块 →
+    探针把方块色当成字色、把**真正的白字**降级成「第二色 = 描边」→
+    寻优把字色改回白色 → 12px 白描边把整行糊成白块。
+    ⇒ 描边复核必须发生在**寻优之后**，用最终字色重判。
+    """
+    im = np.full((80, 120, 3), 250, np.uint8)
+    src = _save(im, os.path.join(tmp, "norm.png"))
+    spec = {
+        "key": "t_norm", "name": "norm", "src": src, "crop": [0, 0, 0, 0],
+        "art": [],
+        "text": [{"id": "t0", "text": "白字", "box": [10, 10, 90, 30],
+                  "base": 28, "size": 22, "weight": 300, "fill": "#FCFAF9",
+                  "stroke": "#F8F6F3", "stroke_w": 12, "bg": "#D1C3B0",
+                  "mask_color": "#FCFAF9", "pad": 0}],
+    }
+    rb = _new_rb(spec, tmp)
+    rb.make_plate()
+    html = rb.build_html()
+    assert 'stroke-width="12"' in html, "前置条件：html 里应先带着这条假描边"
+    open(os.path.join(rb.out, "index.html"), "w", encoding="utf-8").write(html)
+
+    n = rb.normalize_strokes()
+    assert n == 1, "应摘掉 1 处假描边，实得 %d" % n
+    html2 = open(os.path.join(rb.out, "index.html"), encoding="utf-8").read()
+    assert "stroke-width" not in html2, "假描边必须从 index.html 里摘掉"
+    assert "stroke=" not in html2, "stroke 属性本身也必须摘掉"
+    assert rb.spec["text"][0].get("stroke") is None, "spec 里的 stroke 也要清掉"
+    return "白字白描边被摘掉（1 处）"
+
+
+def test_translate_art(tmp):
+    """局部 patch 渲染里，**所有** layer 图都必须跟着平移。
+
+    实测事故（2026-11-09，demo_param_card / 额定电压）：
+        美术裁片 t00_art 落在 (38,30)，而寻优 region 是 (40,702)-(146,739)
+        → patch 里它跑到 cell 的右下角（region 完全无关的位置）
+        → cell 的 dmax 从 91（字的对比度）被抬到 181（深色头图 #1A162C）
+        → 阈值 thr = max(55, 0.55×181) = 99 > 91
+        → **字自己被排除在墨量统计之外**，统计到的只剩那块深色方块
+        → 方块被越粗的字盖得越多 ⇒ 墨量随字重**递减**
+        → 字重打分等于在给「标题色块」打分 ⇒ 低对比度标签被选成 700/900。
+    ⇒ per-text 美术素材（t00_art 等，不在 spec["art"] 里）原来**原样返回**，
+      位置完全没平移 —— 必须按它自己的 left/top 一起平移。
+    """
+    im = np.full((80, 120, 3), 250, np.uint8)
+    src = _save(im, os.path.join(tmp, "trans.png"))
+    spec = {
+        "key": "t_trans", "name": "trans", "src": src, "crop": [0, 0, 0, 0],
+        "art": [],
+        "text": [{"id": "t0", "text": "文字", "box": [10, 10, 90, 30],
+                  "base": 28, "size": 22, "weight": 300, "fill": "#333333",
+                  "bg": "#FAFAFA", "mask_color": "#333333", "pad": 0}],
+    }
+    rb = _new_rb(spec, tmp)
+    rb.make_plate()
+    html = rb.build_html()
+    # 塞一个 per-text 美术裁片（故意**不**登记进 spec["art"]）
+    html = html.replace(
+        '<img class="layer" src="assets/plate.png"',
+        '<img class="layer" src="assets/t00_art.png" style="left:38px;top:30px">'
+        '<img class="layer" src="assets/plate.png"', 1)
+    assert 'src="assets/t00_art.png"' in html, "前置条件：html 里应有这张美术裁片"
+
+    body = rb._split_html(html)[1]
+    out = rb._translate_body(body, 40, 702)
+    assert 'src="assets/t00_art.png" style="left:-2px;top:-672px"' in out, \
+        "per-text 美术裁片必须按 (-x0,-y0) 平移（38-40=-2, 30-702=-672）"
+    assert 'src="assets/plate.png" style="left:-40px;top:-702px"' in out, \
+        "照片层也必须平移"
+    return "per-text 美术裁片随 region 一起平移"
+
+
+def test_ink_threshold_relative(tmp):
+    """墨量阈值必须是**相对量** —— 同样的字形，只换更浅的字色，墨量不能变。
+
+    实测事故（2026-11-09，demo_param_card / 额定电压）：
+        原图字色 #564E44（离底色 121）vs 候选字色 #746A5E（离底色 91）
+        旧的 `thr = max(55, 0.55*dmax)` 里那个**绝对下限 55** 让两边的
+        「覆盖率口径」不同（54.5% vs 60.5%）
+        ⇒ 候选墨量被**系统性低估** ⇒ 字重寻优只能靠加粗去凑数
+        ⇒ 原图是细体(Thin)却被判成 200/700。
+    ⇒ 阈值改成 `max(12, 0.55*dmax)` 后，同样的覆盖率在两种字色下必须数出同样的墨量。
+    """
+    bg = np.array([207, 193, 174], np.int32)
+    alpha = np.array([0.0, 0.3, 0.58, 0.8, 1.0, 0.4, 0.9], np.float32)
+    spec = {
+        "key": "t_thr", "name": "thr", "src": _blank(tmp, "thr.png"),
+        "crop": [0, 0, 0, 0], "art": [], "text": [],
+    }
+    rb = _new_rb(spec, tmp)
+    areas = []
+    for fill in ([86, 78, 68], [116, 106, 94]):      # 深字色 / 浅字色
+        f = np.array(fill, np.float32)
+        pix = bg.astype(np.float32) + alpha[:, None] * (f - bg.astype(np.float32))
+        area, _ = rb._ink_stats(pix.astype(np.uint8), bg)
+        areas.append(int(area))
+    assert areas[0] == areas[1], \
+        "同样的覆盖率在不同字色下墨量必须一致，实得 %s（旧的绝对下限 55 会让它们不等）" % areas
+    assert areas[0] == 4, "覆盖率 >55%% 的像素应有 4 个，实得 %d" % areas[0]
+    return "墨量阈值相对化，深/浅字色数出同样墨量（%d）" % areas[0]
+
+
 # ------------------------------------------------------------------ main
 CASES = [
     ("1 归美术层（覆盖 >=50% 判定）", test_art_cover),
@@ -256,6 +407,10 @@ CASES = [
     ("4 多色字 clipPath 副本一起改", test_set_attr_group),
     ("5 make_plate 存 self.P / elem_masks", test_make_plate_state),
     ("6 三个二分开关可用", test_env_switches),
+    ("7 假描边（晕圈/同色/打分）", test_false_stroke),
+    ("8 寻优后描边复核", test_normalize_strokes),
+    ("9 局部渲染平移所有图层", test_translate_art),
+    ("10 墨量阈值相对化", test_ink_threshold_relative),
 ]
 
 

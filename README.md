@@ -6,8 +6,8 @@
 > Turn a reference image into an **editable** source package (HTML + CSS + SVG) —
 > layered into *photo plate / vector structure / live text* — and verify it
 > **pixel-by-pixel** against the original. Built for e-commerce main & secondary
-> images (Taobao / Tmall / Amazon), but works on any poster-like layout.
-> Ships with three **programmatically generated** sample images (no third-party
+> images, but works on any poster-like layout.
+> Ships with **eight programmatically generated** sample images (no third-party
 > assets), a single CLI, and a written-down set of hard-won rules.
 
 ---
@@ -47,15 +47,28 @@ out/<KEY>/deliver/<KEY>_源件包/
 
 三张示例图的实测结果：
 
-| 示例 | 版式族 | 活字版差异 | 像素层版 | PSNR |
-|---|---|---|---|---|
-| `demo_param_card` | 深色标题条 + 参数表 + **跨底色文字** | 5.11% | 5.11% | 21.59 |
-| `demo_brace_title` | 大括号标题 + 圆形标注 + 底部信息条 | 3.64% | 3.64% | 20.62 |
-| `demo_compare` | 左右双栏对比 + 结论文案条 | 3.53% | 3.53% | 21.47 |
+| 示例 | 版式族 | 活字版差异 | 像素层版差异 | 活字 PSNR | 像素 PSNR |
+|---|---|---|---|---|---|
+| `demo_param_card` | 深色标题条 + 参数表 + **跨底色文字** | 2.40% | **0.17%** | 27.20 | 37.18 |
+| `demo_brace_title` | 大括号标题 + 圆形标注 + 底部信息条 | 2.45% | **1.49%** | 23.19 | 24.56 |
+| `demo_compare` | 左右双栏对比 + 结论文案条 | 1.74% | **0.28%** | 28.10 | 37.90 |
+
+> 差异 = 通道最大差 > 20 的像素占比，越小越接近原图。
+> **像素层版** = 拿不到原字形时自动降级：用原图裁切的字形图逐像素对齐。
 
 **看热力图**（`examples/results/demo_param_card_热力图.png`）：
-**非文字区是纯黑（0 差异）**，残差全部集中在文字上
+残差**全部落在文字上**，背景、色块、产品图区是纯黑
 —— 这说明**分层本身是干净的**，残差来自字体替代，是素材限制不是工程缺陷。
+
+非文字区差异（文字框外扩 2px 后统计 `diff>20`，用来校验分层没搞错）：
+
+| 示例 | 活字版 | 像素层版 |
+|---|---|---|
+| `demo_param_card` | 0.06% | **0.00%** |
+| `demo_compare` | 0.31% | 0.31% |
+| `demo_brace_title` | 0.51% | 0.44% |
+
+残留的零点几个百分点来自**字形抗锯齿边缘溢到文字框外**，不是分层错误。
 
 ---
 
@@ -119,9 +132,15 @@ OCR 走 `rapidocr-onnxruntime`，它会连带拉 `onnxruntime`（约 200MB 解�
 | **活字版** `index.html` | 真的 SVG `<text>` | ✅ 随便改 | 取决于字体是否可得 |
 | **像素层版** `index_px.html` | 原图裁切的字形图 | ❌ | ✅ 逐像素一致 |
 
-**字体替代是这个方法的天花板**：商业字体没有授权源，只能用可替代的公开字体
-（Noto Sans SC / Noto Serif SC / Playfair Display / Century Gothic）。
+**字体替代是这个方法的天花板**：拿不到原字体时只能用可替代的公开字体
+（Noto Sans SC / Noto Serif SC / Playfair Display）。
 字形不一样 → 残差全在文字上。所以要两个版本一起给。
+
+> **商业字体不随本仓库分发。** Century Gothic / Bodoni MT 等是 Monotype 等厂商的
+> 商用字体，授权写明「不得再分发」。引擎把它们登记成**可选字体**：
+> 你自己把字体文件放到 `layout_restore/assets/`（或 `LAYOUT_RESTORE_FONTS` 指向的目录）
+> 就会自动启用；没有就降级到仓库自带的开源字体。
+> 详见 [`layout_restore/assets/THIRD_PARTY_NOTICES.md`](layout_restore/assets/THIRD_PARTY_NOTICES.md)。
 
 ---
 
@@ -153,14 +172,15 @@ OCR 走 `rapidocr-onnxruntime`，它会连带拉 `onnxruntime`（约 200MB 解�
 ## 已知边界（说清楚比吹嘘有用）
 
 1. **字体替代是天花板，不是分层逻辑的问题。**
-   把主视觉换成原图裁切块后残差能掉到 0.4% —— 说明分层本身是干净的，残差来自字形。
+   把文字降级成原图裁切块后残差能掉到 0.17% —— 说明分层本身是干净的，残差来自字形。
 2. **跨底色的文字（压在色块边界上）需要局部底色取样。**
    判「墨色」不能只用「离单一全局底色最远」—— 底色是**局部量**。
    详见 [docs/02_铁律.md](docs/02_铁律.md) 第 7 条。
 3. **同族复用不能直接复制坐标。**
    同一个版式族的不同图，结构相同但坐标不同。族提供的是**判据与参数**，不是像素坐标。
 4. **本仓库不含任何第三方素材。**
-   三张示例图全部由 `examples/make_samples.py` 程序绘制，可复现、可商用。
+   八张示例图全部由 `examples/make_samples.py` 程序绘制，可复现、可商用。
+   唯一的第三方资源是**字体**，均为 SIL OFL 1.1 并随附许可全文。
    你自己的参考图请使用**你有权使用的素材**。
 
 ---
@@ -227,6 +247,21 @@ Skill 正文只有 108 行（lint 通过），bulky 的背景知识在 `referenc
 
 MIT —— 见 [LICENSE](LICENSE)。
 
-字体均为 SIL Open Font License：
-Noto Sans SC / Noto Serif SC（Google Fonts）、Playfair Display（Google Fonts）、
-Century Gothic（GOTHIC.TTF，URW++ 衍生，AGPL/GPL+font-exception 另附）。
+**字体**均为 **SIL Open Font License 1.1**，允许自由使用与再分发，
+且**已随附许可全文**（`layout_restore/assets/OFL-*.txt`）：
+
+| 字体 | 授权 |
+|---|---|
+| Noto Sans SC | SIL OFL 1.1 |
+| Noto Serif SC | SIL OFL 1.1 |
+| Playfair Display | SIL OFL 1.1 |
+
+本仓库**不分发任何商业字体**（Century Gothic / Bodoni MT 等），
+理由与机制见 [`layout_restore/assets/THIRD_PARTY_NOTICES.md`](layout_restore/assets/THIRD_PARTY_NOTICES.md)。
+
+**示例图不含任何第三方素材** —— 全部由 `examples/make_samples.py` 程序绘制。
+
+> 注：`requirements.txt` 里 `Pillow==9.5.0` 是**精确锁版本**，不是 `>=`。
+> 示例图用的 Noto Sans SC 是**可变字体**，它的默认实例由渲染库挑，
+> 不同 Pillow 版本挑的不一样 ⇒ 不锁版本则产物无法字节级复现。
+> 详见 [`skills/layout-restore/references/铁律.md`](skills/layout-restore/references/铁律.md) 第 34 条。

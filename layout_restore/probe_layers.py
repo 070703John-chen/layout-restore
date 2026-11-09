@@ -315,6 +315,31 @@ def hex2bgr(h):
     return np.array([int(h[3:5], 16), int(h[1:3], 16), int(h[5:7], 16)], np.int16)
 
 
+def _is_blend_color(c_hex, f_hex, bg_hex, slack_ratio=0.20):
+    """c_hex 是不是 f_hex（墨色）与 bg_hex（底色）之间的**抗锯齿混色**？
+
+    原理：max 范数下三角不等式恒成立 ——
+        ||S−F||∞ + ||S−G||∞ ≥ ||F−G||∞
+    且**当且仅当 S 落在 F→G 连线上时取等号**。
+      · 抗锯齿晕圈 = 墨色与底色的插值 → 必然共线 → slack ≈ 0
+      · 真描边色（另一个色相）→ 明显偏离连线 → slack 很大
+
+    为什么必须有这个判据（2026-11-09 实测）：
+        细体白字在米色底上，晕圈是「白↔米色」的中间色 ——
+        它**离底色也远**（差 ~25）→ 旧的启发式「第二簇离底色也远 → 当描边」判成真描边。
+        随后描边宽度寻优挑了最大值 12px → 22~36px 的字被描边糊成白块，
+        整行**读不出来**（活字版 diff 4.70%，像素层版 0.12%）。
+    """
+    s = hex2bgr(c_hex).astype(np.int32)
+    f = hex2bgr(f_hex).astype(np.int32)
+    g = hex2bgr(bg_hex).astype(np.int32)
+    d_fg = int(np.abs(f - g).max())
+    if d_fg <= 0:
+        return True
+    slack = int(np.abs(s - f).max()) + int(np.abs(s - g).max()) - d_fg
+    return slack < slack_ratio * d_fg
+
+
 # ------------------------------------------------------------------ 局部底色
 def col_bg_map(crop2, outer=None, quant=16, smooth=3):
     """逐列局部底色 -> (w, 3) int32（BGR）。
@@ -576,7 +601,18 @@ def ink_color(img_bgr, box, bg_ref=None, mode="ring"):
         alts.sort(key=lambda t: (-t[2], -t[1]))
         if (not cross) and stroke is None and len(alts) > 1 and alts[0][2] - alts[1][2] < 30 \
                 and alts[1][1] >= 8:
-            stroke = alts[1][0]
+            # ★★ 假描边清零：抗锯齿晕圈是「墨色↔底色」的插值，离底色也远 →
+            #    这条启发式会把它当成「第二色 = 描边」。
+            #    真描边 = 字被一圈**另一种颜色**包住 → 颜色偏离「墨-底连线」。
+            if not _is_blend_color(alts[1][0], fill, bg_hex):
+                stroke = alts[1][0]
+        # ★★ 同色描边 = 纯加粗，没有语义：
+        #    fill 与 stroke 同色时描边只会把字撑胖、让相邻字形糊在一起
+        #    （实测 22px 的字 + 12px 同色描边 → 整行读不出来）。
+        #    要加粗请用 font-weight，描边只留给「另一种颜色」。
+        if stroke and stroke.upper() == fill.upper():
+            stroke = None
+            stroke_w = 0
         return {"fill": fill, "bg": bg_hex, "stroke": stroke,
                 "stroke_w": stroke_w,
                 "fill_dist_bg": fill_dist, "n_colors": len(cols),
@@ -612,7 +648,13 @@ def ink_color(img_bgr, box, bg_ref=None, mode="ring"):
     fill = scored[0][1]
     stroke = None
     if len(scored) > 1 and scored[0][0] - scored[1][0] < 30 and scored[1][2] >= 8:
-        stroke = scored[1][1]        # 第二簇离背景也很远 → 可能是描边/双色
+        cand = scored[1][1]        # 第二簇离背景也很远 → 可能是描边/双色
+        # ★★ 假描边清零（见 _is_blend_color）：晕圈离底色也远，但它是墨↔底的插值
+        if not _is_blend_color(cand, fill, bg_hex):
+            stroke = cand
+    # ★★ 同色描边 = 纯加粗，没有语义（见 majority 分支的同款说明）
+    if stroke and stroke.upper() == fill.upper():
+        stroke = None
     return {"fill": fill, "bg": bg_hex, "stroke": stroke,
             "fill_dist_bg": scored[0][0], "n_colors": len(cols)}
 

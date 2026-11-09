@@ -13,8 +13,8 @@
   ⑤ 以上都不是 ⇒ 阻塞
 
 用法：
-  python audit_coverage.py --source  D:\\path\\out \\
-                           --target  D:\\path\\交付站\\src \\
+  python audit_coverage.py --source  <工程根>\\out \\
+                           --target  <工程根>\\交付站\\src \\
                            --prefix  opt/ \\
                            --intermediate _patch_sweep.html,_patch_sweep.png,_render_1x.png,_render_px.png \\
                            --retired-prefix <批次前缀>,<批次前缀>,<批次前缀> \\

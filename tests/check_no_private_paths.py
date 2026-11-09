@@ -187,6 +187,10 @@ def main():
                 continue
             m = PAT.search(l)
             if m:
+                hit = m.group(0)
+                # 文档/脚本里的**占位路径示例**（<工程根>\out、D:\path\to\out）允许出现
+                if any(mk in hit for mk in ("<", ">", "\\path\\", "/path/", "path\\to", "path/to")):
+                    continue
                 print("PATH %s:%d  %s" % (rel, i, s[:100]))
                 bad += 1
             for name, rx in STRUCT_PATTERNS:

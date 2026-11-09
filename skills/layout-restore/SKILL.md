@@ -102,7 +102,7 @@ displayNames:
     原因：「看起来是冗余」不是删除理由。删之前必须证明归集站里确实有它，
     有缺口就 SKIP。
     ```powershell
-    python scripts/audit_coverage.py --source D:\path\out --target D:\path\交付站\src `
+    python scripts/audit_coverage.py --source <工程根>\out --target <工程根>\交付站\src `
       --intermediate _render_1x.png,_render_px.png --json-out coverage.json
     ```
     闸门 BLOCKED 就不许删；覆盖度 < 100% 的旧站**只能归档**。

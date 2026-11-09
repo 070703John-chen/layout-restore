@@ -179,38 +179,20 @@ def main():
                       "values": sorted(set([y1 - 3, y1, y1 + 3])), "region": reg})
         sweep.append({"marker": marker, "attr": "x",
                       "values": sorted(set([x0 - 2, x0, x0 + 2])), "region": reg})
-        # 描边宽度自动校准：描边厚度靠探针估不准（估的是总笔画宽），
-        # 交给寻优按像素差挑。描边是大特征（几像素宽的连续轮廓），
-        # 像素差在这里比在细字上可靠。
-        if t.get("stroke"):
-            cwid = t.get("stroke_w") or 2
-            # ⚠ 候选集必须覆盖真值的 2 倍以上：
-            #   原图描边**单侧**就有 4~5px，SVG stroke-width 是对称的 → 要到 8~10。
-            #   原来上限只有 6 → 大描边永远校不准（天花板卡死）。
-            sweep.append({"marker": marker, "attr": "stroke-width",
-                          "values": sorted(set([1, 2, 3, 4, 5, 6, 8, 10, 12, cwid])),
-                          "region": reg, "score": "strokearea"})
-        # 字重自动校准：电商图正文大多是常规字重，猜的 700/900 常偏粗。
-        # 交给寻优按像素差异挑最接近的，而不是人肉改。
-        if a.cal_weight:
-            cw = t.get("weight") or 700
-            # 评分用「墨量」不用像素差：字形差 1px 时笔画不重合，
-            # 像素差分不出颜色和字重（实测灰@300 赢过 黑@400）。
-            # 墨量 = 笔画覆盖面积，直接对应字重，且不怕 1px 错位。
-            # 有描边的字：填充色面积和描边色面积要分开数，
-            # 否则「细填充+粗描边」和「粗填充+细描边」的墨量相等 → 判不出来。
-            # ⚠ 跨底色的字不能用量判据：墨量 = 「离**全局**底色远的像素数」，
-            #   而另一种底色整片都远 → 墨量被底色灌水，字重判不出来。
-            #   跨底色改用像素差（底色在各候选里都一样，差异只来自笔画）。
-            if t.get("cross_bg"):
-                sweep.append({"marker": marker, "attr": "font-weight",
-                              "values": sorted(set([300, 400, 500, 700, 900, cw])),
-                              "region": reg})
-            else:
-                wscore = "fillarea" if t.get("stroke") else "inkarea"
-                sweep.append({"marker": marker, "attr": "font-weight",
-                              "values": sorted(set([300, 400, 500, 700, 900, cw])),
-                              "region": reg, "score": wscore})
+        # ★★ 寻优顺序：**字色 → 字重 → 描边宽度**（2026-11-09 实测后固定）
+        #
+        # 为什么字色必须排第一：
+        #   字重打分（墨量）用「离底色足够远的像素数」，而阈值
+        #   thr = max(55, 0.55 × dmax) 里的 dmax = **该候选的字色**离底色的距离。
+        #   字色没校准时（探针抓的是抗锯齿中间色，往往偏深）→ dmax 偏大 → thr 偏大
+        #   → 候选的墨量被压低 → 寻优为了凑上原图的墨量，**拼命加粗**
+        #   → 细体原图被渲成 Black（实测标签列整体偏粗一号）。
+        #
+        # 为什么描边宽度必须排最后：
+        #   描边打分用 spec 里的 fill/stroke。字色没校准时，
+        #   原图的「描边色像素」被算成整段文字 → 描边越宽越接近 → 挑最大值 12
+        #   → 22~36px 的字被糊成一块（2026-11-09 实测事故）。
+        #
         # 字色自动校准：小字抗锯齿后探针可能取到中间灰，
         # 把探针给的备选色一起交给寻优挑。
         if a.cal_fill:
@@ -226,6 +208,40 @@ def main():
                 #   实测：白 3901 px vs 灰 4287 px → 正确挑出白 ✓。
                 sweep.append({"marker": marker, "attr": "fill",
                               "values": list(dict.fromkeys(cands)), "region": reg})
+        # 字重自动校准：电商图正文大多是常规字重，猜的 700/900 常偏粗。
+        # 交给寻优按像素差异挑最接近的，而不是人肉改。
+        if a.cal_weight:
+            cw = t.get("weight") or 700
+            # 评分用「墨量」不用像素差：字形差 1px 时笔画不重合，
+            # 像素差分不出颜色和字重（实测灰@300 赢过 黑@400）。
+            # 墨量 = 笔画覆盖面积，直接对应字重，且不怕 1px 错位。
+            # 有描边的字：填充色面积和描边色面积要分开数，
+            # 否则「细填充+粗描边」和「粗填充+细描边」的墨量相等 → 判不出来。
+            # ⚠ 跨底色的字不能用量判据：墨量 = 「离**全局**底色远的像素数」，
+            #   而另一种底色整片都远 → 墨量被底色灌水，字重判不出来。
+            #   跨底色改用像素差（底色在各候选里都一样，差异只来自笔画）。
+            if t.get("cross_bg"):
+                sweep.append({"marker": marker, "attr": "font-weight",
+                              "values": sorted(set([100, 200, 300, 400, 500, 700, 900, cw])),
+                              "region": reg})
+            else:
+                wscore = "fillarea" if t.get("stroke") else "inkarea"
+                sweep.append({"marker": marker, "attr": "font-weight",
+                              "values": sorted(set([100, 200, 300, 400, 500, 700, 900, cw])),
+                              "region": reg, "score": wscore})
+        # 描边宽度自动校准：描边厚度靠探针估不准（估的是总笔画宽），
+        # 交给寻优按像素差挑。描边是大特征（几像素宽的连续轮廓），
+        # 像素差在这里比在细字上可靠。
+        if t.get("stroke"):
+            cwid = t.get("stroke_w") or 2
+            # ⚠ 候选集必须覆盖真值的 2 倍以上：
+            #   原图描边**单侧**就有 4~5px，SVG stroke-width 是对称的 → 要到 8~10。
+            #   原来上限只有 6 → 大描边永远校不准（天花板卡死）。
+            # ★ 补 0：描边不一定该有 —— 「不要描边」必须是一个可达候选，
+            #   否则寻优只能在「描多粗」里挑，挑不出「本来就该没描边」。
+            sweep.append({"marker": marker, "attr": "stroke-width",
+                          "values": sorted(set([0, 1, 2, 3, 4, 5, 6, 8, 10, 12, cwid])),
+                          "region": reg, "score": "strokearea"})
 
     spec = {
         "key": a.key,

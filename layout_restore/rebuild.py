@@ -535,7 +535,9 @@ class Rebuild:
                 fill = "url(#%s)" % gid
             a = 'x="%d" y="%s" font-size="%s" font-weight="%d" fill="%s"' % (
                 x0, t["base"], t["size"], t.get("weight", 700), fill)
-            if t.get("stroke"):
+            if t.get("stroke") and t["stroke"].upper() != fill.upper():
+                # ★★ 同色描边不发（兜底）：fill==stroke 时描边只是加粗，
+                #    会把字撑胖、相邻字形糊成一块。字重交给 font-weight。
                 a += ' stroke="%s" stroke-width="%s" paint-order="stroke"' % (
                     t["stroke"], t.get("stroke_w", 2))
             if w > 4:
@@ -756,6 +758,12 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                     best = (v, sc, html)
             open(htmlp, "w", encoding="utf-8").write(best[2])
             h = best[2]
+            # ★ 每寻完一项就回写 spec（2026-11-09）：
+            #   后面排队的属性打分要用**当前**的属性值。
+            #   典型：描边打分用 spec 里的 fill/stroke ——
+            #   字色刚被寻优改成白色，spec 里还是探针抓错的深色 →
+            #   描边评分基准错 → 永远挑最大描边宽度 → 字糊成块。
+            self._sync_spec_from_html(h)
             print("  => %s : %s=%s (%d px)\n" % (s["marker"], s["attr"], best[0], best[1]))
         self._sync_spec_from_html(h)
         return h
@@ -832,6 +840,10 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         """把整页内容平移 (-x0,-y0)，让 region 落在窗口原点。"""
         art_pos = {nm: (int(bx[0]), int(bx[1])) for nm, bx in self.spec.get("art", [])}
 
+        def _num(s):
+            m = re.search(r"-?\d+(?:\.\d+)?", s or "")
+            return int(float(m.group(0))) if m else 0
+
         def fix(m):
             src = m.group("src")
             name = src.split("/")[-1].replace(".png", "")
@@ -842,7 +854,23 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                 ax, ay = art_pos[name]
                 return ('<img class="layer" src="assets/%s.png" '
                         'style="left:%dpx;top:%dpx">' % (name, ax - x0, ay - y0))
-            return m.group(0)
+            # ★★ per-text 美术素材（t00_art / t14_art …）原来在这里**原样返回**，
+            #    位置完全没被平移 ⇒ 在 patch 局部渲染里，它出现在**画面的原始坐标**
+            #    （而不是 region 对应的位置）。
+            #    实测事故（2026-11-09，demo_param_card / 额定电压）：
+            #      t00_art 是「标题压在深色头图上的裁片」，落在 (38,30)；
+            #      patch 的 region 是 (40,702)-(146,739) → 它正好盖住 cell 右下角；
+            #      → cell 的 dmax 从 91（字的对比度）被抬到 181（深色头图 #1A162C）
+            #      → 阈值 thr = max(55, 0.55×181) = 99 > 91
+            #      → **字自己被排除在墨量统计之外**，统计到的只剩那块深色方块
+            #      → 方块被越粗的字盖得越多 ⇒ 墨量随字重**递减**
+            #      → 字重打分等于在给「标题色块」打分 ⇒ 低对比度标签被选成 700/900。
+            #    ⇒ 这里必须按**它自己的 left/top** 平移，而不是丢弃。
+            ox = _num(m.group("lx"))
+            oy = _num(m.group("ty"))
+            return ('<img class="layer" src="assets/%s.png" '
+                    'style="left:%dpx;top:%dpx">' % (name, ox - x0, oy - y0))
+
         # 注意：照片层写的是 left:0;top:0（没有 px），美术层是 left:0px;top:0px
         # 正则要两种都能匹配上，否则照片层不会被平移，patch 显示的是图的错位区域
         b = re.sub(r'<img class="layer" src="assets/(?P<src>[^"]+)" '
@@ -886,11 +914,18 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         med = np.median(reg[key == k], axis=0).astype(np.int32)
         return med
 
-    def _ink_stats(self, pix, bg, ref=None, tol=90):
+    def _ink_stats(self, pix, bg, ref=None, tol=90, exclude=None):
         """返回 (墨量, 墨色)。
 
         ref=None  → 墨 = 离纸底足够远的那批像素（整体墨量）
         ref=色值  → 墨 = **与该颜色接近**的像素（分开数填充色 / 描边色）
+        exclude=色值 → 从 ref 的计数里**剔除**该颜色的像素。
+
+        ⚠ exclude 是描边打分的关键（2026-11-09）：
+           描边色与填充色很接近时（差 < tol），**填充色本身也被算成描边色**
+           → 描边越宽、描边色像素越多 → 打分「越宽越接近原图」→
+           寻优永远挑最大描边宽度 → 字被撑成糊块。
+           剔掉填充色之后，量的才是**真正的描边环**。
         """
         if len(pix) == 0:
             return 0, None
@@ -910,6 +945,11 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                               int(ref[5:7], 16)], np.int32)
             dm = np.abs(pix.astype(np.int32) - r).max(axis=1)
             mask = dm < tol
+            if exclude is not None and not exclude.startswith("url("):
+                e = np.array([int(exclude[1:3], 16), int(exclude[3:5], 16),
+                              int(exclude[5:7], 16)], np.int32)
+                de = np.abs(pix.astype(np.int32) - e).max(axis=1)
+                mask &= (de >= tol)     # 填充色本身不算描边色
             area = int(mask.sum())
             if area < 2:
                 return area, None
@@ -919,7 +959,17 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         dmax = int(d.max())
         if dmax < 45:
             return 0, None
-        thr = max(55, int(0.55 * dmax))
+        # ★★ 阈值必须是**相对量**（2026-11-09 实测修正）：
+        #   原来写的是 thr = max(55, 0.55*dmax) —— 那个**绝对下限 55** 会让
+        #   「阈值占该图自身对比度的比例」随字色深浅变化：
+        #     原图字色 #564E44（d=121）→ thr=66 → 取覆盖率 > 54.5% 的像素
+        #     候选字色 #746A5E（d=91） → thr=55 → 取覆盖率 > 60.5% 的像素
+        #   ⇒ 候选的墨量被**系统性低估** ⇒ 字重寻优只能靠「加粗」去凑数
+        #   ⇒ 细体原图被判成 200/700（实测 额定电压：原图 Thin、选出 200）。
+        #   ⇒ 改成纯相对：两边都用各自 dmax 的 55% ⇒ 量的是同一个覆盖率口径，
+        #      **字色深浅不再影响字重判断**。
+        #   下限只保留一个很小的 12，用来挡「dmax 很小、阈值低到把底噪算进来」。
+        thr = max(12, int(0.55 * dmax))
         mask = d > thr
         area = int(mask.sum())
         if area < 2:
@@ -946,11 +996,14 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
         orig_pix = self.O[y0:y1, x0:x1].reshape(-1, 3)
         ref = None
         elem = self._elem_by_marker(marker) if marker else None
+        excl = None
         if mode == "fillarea" and elem:
             ref = elem.get("fill")
         elif mode == "strokearea" and elem:
             ref = elem.get("stroke")
-        o_area, o_color = self._ink_stats(orig_pix, bg, ref=ref)
+            # ★ 描边色要**排除填充色**：否则描边越宽「描边色像素」越多 → 打分偏大
+            excl = elem.get("fill")
+        o_area, o_color = self._ink_stats(orig_pix, bg, ref=ref, exclude=excl)
         cells = self._render_cells(cands, region)
         scores = []
         c_areas = []
@@ -959,7 +1012,7 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                 scores.append(10 ** 9)
                 c_areas.append(-1)
                 continue
-            c_area, c_color = self._ink_stats(cell.reshape(-1, 3), bg, ref=ref)
+            c_area, c_color = self._ink_stats(cell.reshape(-1, 3), bg, ref=ref, exclude=excl)
             c_areas.append(c_area)
             if mode in ("inkarea", "fillarea", "strokearea"):
                 scores.append(abs(c_area - o_area))
@@ -1105,6 +1158,84 @@ svg text{-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
                              '%s="%s"' % (attr, value), seg, count=1)
             out = out[:s] + new_seg + out[e:]
         return out
+
+    # ---------------------------------------------------------- 描边复核
+    def _is_blend(self, stroke, fill, bg):
+        """stroke 是不是「墨色↔底色」的插值（抗锯齿晕圈）→ 那就不是真描边。"""
+        try:
+            try:
+                from .probe_layers import _is_blend_color
+            except ImportError:          # 直接跑 rebuild.py 时（无包上下文）
+                from probe_layers import _is_blend_color
+            return _is_blend_color(stroke, fill, bg)
+        except Exception:
+            return False
+
+    def _strip_stroke(self, html, marker):
+        """把某个文字的**所有** <text> 副本里的描边属性摘掉。"""
+        esc = _esc_marker(marker)
+        pat = r'<text[^>]*>' + re.escape(esc) + r'</text>'
+
+        def _clean(m):
+            # 用 lambda 不用字符串替换：正文里可能有 \\o 之类会被当转义序列
+            return re.sub(r'\s+(?:stroke|stroke-width|paint-order)="[^"]*"', '', m.group(0))
+
+        return re.sub(pat, _clean, html)
+
+    def normalize_strokes(self):
+        """**寻优之后**再复核一遍描边，把「假描边」摘掉。
+
+        为什么必须放在寻优之后（2026-11-09 实测，demo_param_card 横幅）：
+            探针判字色时可能被**框内的大色块**带偏 ——
+            文字框右侧压着一个深色方块，「离底色最远」抓成了方块色（#403426），
+            **真正的白字被降级成「第二色 = 描边」**（#F8F6F3）。
+            寻优把字色改回白色（#FCFAF9）之后，
+            那条描边就成了「白字上的白描边」= 纯加粗 → 12px 描边把整行糊成白块。
+            ⇒ 探针阶段判不准的东西，寻优之后要**用最终字色重判一次**。
+
+        复核两条：
+            ① stroke == fill                 → 纯加粗，丢
+            ② stroke 是 fill 与底色的插值      → 抗锯齿晕圈，丢
+        """
+        texts = self.spec.get("text", [])
+        # 同名文字可能有多个元素：只有**全部**都要丢，才按 marker 整组摘
+        by_text = {}
+        for t in texts:
+            by_text.setdefault(t.get("text"), []).append(t)
+        drop_markers = set()
+        for txt, group in by_text.items():
+            flags = []
+            for t in group:
+                st = t.get("stroke")
+                fl = t.get("fill")
+                bg = t.get("bg")
+                if not st or not fl:
+                    flags.append(False)
+                    continue
+                if st.upper() == fl.upper():
+                    flags.append(True)
+                elif bg and self._is_blend(st, fl, bg):
+                    flags.append(True)
+                else:
+                    flags.append(False)
+            if flags and all(flags):
+                drop_markers.add(txt)
+
+        if not drop_markers:
+            return 0
+        htmlp = os.path.join(self.out, "index.html")
+        h = open(htmlp, encoding="utf-8").read()
+        n = 0
+        for t in texts:
+            if t.get("text") in drop_markers and t.get("stroke"):
+                h = self._strip_stroke(h, t["text"])
+                t["stroke"] = None
+                t["stroke_w"] = 0
+                n += 1
+        open(htmlp, "w", encoding="utf-8").write(h)
+        print("  描边复核：摘掉 %d 处假描边（%s）"
+              % (n, "、".join(str(m)[:10] for m in list(drop_markers)[:3])), flush=True)
+        return n
 
     # ---------------------------------------------------------- 像素层版
     def make_px(self):
@@ -1290,6 +1421,11 @@ def run(spec_path, outdir, do_sweep=True, do_deliver=True):
         B = rb.render(os.path.join(outdir, "index.html"), 1, os.path.join(outdir, "_render_1x.png"))
         print("  寻优后:", rb.diff(B))
         rb.calibrate(B, "寻优后 墨迹包围盒校准")
+        # ★ 寻优后复核描边（字色寻优可能把「假描边」暴露成「同色描边」）
+        if rb.normalize_strokes():
+            B = rb.render(os.path.join(outdir, "index.html"), 1,
+                          os.path.join(outdir, "_render_1x.png"))
+            print("  复核描边后:", rb.diff(B))
         # 寻优结果回写进 spec（spec 即标定结果，可复现）
         json.dump(spec, open(os.path.join(outdir, "_spec.json"), "w", encoding="utf-8"),
                   ensure_ascii=False, indent=2)
@@ -1305,6 +1441,12 @@ def run(spec_path, outdir, do_sweep=True, do_deliver=True):
             json.dump(spec, open(cal, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
         except Exception:
             pass
+    else:
+        # 没跑寻优也要复核一次：探针抓错字色时留下的假描边照样会糊字
+        if rb.normalize_strokes():
+            B = rb.render(os.path.join(outdir, "index.html"), 1,
+                          os.path.join(outdir, "_render_1x.png"))
+            print("  复核描边后:", rb.diff(B))
 
     res = {"live": rb.diff(B)}
     # 像素层版**总是**产出：即使没有文字需要降级，也要有一份
