@@ -75,7 +75,7 @@ out/<KEY>/deliver/<KEY>_源件包/
 ## 快速开始
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/070703John-chen/layout-restore.git
 cd layout-restore
 
 # 轻装（推荐先跑通）—— 不含 OCR
