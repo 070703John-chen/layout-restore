@@ -50,23 +50,14 @@ jobs:
           python -m layout_restore.cli verify --pack out/demo_param_card
 
       # ⚠ 像素层曾经**完全空转**（降级标记写了，px 素材一张没生成，
-      #   build 照样 exit 0 并打印「验收」结论）→ 这里显式断言产物存在。
+      #   build 照样 exit 0 并打印「验收」结论）→ 这里显式断言。
+      #   注意：像素层是**兜底**，只有还原不出来的文字才降级。
+      #   所以不能无条件要求"必须有 px 素材"——还原得好的平台上就是 0 处降级
+      #   （Ubuntu 实测活字版 diff 0.11%，无一处超阈值）。
+      #   断言按标记文件分支：有降级 → 素材数对得上且像素层更好；
+      #   无降级 → 活字版本身达标。两条路都是真断言。
       - name: Pixel layer actually engaged
-        run: |
-          python - <<'PY'
-          import glob, json, os, sys
-          pack = glob.glob("out/demo_param_card/deliver/*_源件包")[0]
-          px = glob.glob(os.path.join(pack, "assets", "px_*.png"))
-          assert px, "像素层一张素材都没生成 —— 降级逻辑又空转了"
-          marker = json.load(open("out/demo_param_card/_px_fallback.json", encoding="utf-8"))
-          assert marker["changed"] == len(px), \
-              "标记的降级处数(%d) != px 素材数(%d)" % (marker["changed"], len(px))
-          rep = json.load(open("out/demo_param_card/_report.json", encoding="utf-8"))
-          live = rep["live"]["diff_gt20_pct"]
-          pxr = rep["px"]["diff_gt20_pct"]
-          assert pxr < live, "像素层版(%.2f%%)没有优于活字版(%.2f%%)" % (pxr, live)
-          print("像素层 OK：%d 张素材，diff %.2f%% < 活字 %.2f%%" % (len(px), pxr, live))
-          PY
+        run: python tests/check_pixel_layer.py --out out/demo_param_card
 
       # ⚠ 「验收通过」这件事本身必须被验证过：
       #   交付包被改坏也照样判 OK 的坑（没有基准可比 → 不比对）。
