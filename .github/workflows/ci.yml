@@ -35,11 +35,13 @@ jobs:
       - name: CLI smoke test
         run: python -m layout_restore.cli --help
 
-      - name: Samples are reproducible
-        run: |
-          python examples/make_samples.py --out examples/samples
-          git diff --exit-code examples/samples || \
-            (echo "::error::示例图不可复现（重新生成后与仓库内不一致）"; exit 1)
+      # ⚠ 这里刻意**不用** `git diff --exit-code examples/samples`：
+      #   字节级断言跨平台会假失败 —— 同样的像素，PNG 压缩流（zlib/libpng 版本）
+      #   和栅格化（FreeType 版本与 hinting）都可能不同。
+      #   示例图是给人看的，断言应落在像素上；报告里会同时打出字节是否一致，
+      #   同平台（Windows）应显示"逐字节一致"。
+      - name: Samples are reproducible (pixel-level)
+        run: python tests/check_samples_reproducible.py
 
       - name: End-to-end build + verify
         run: |
