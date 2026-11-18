@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: No private paths / brands
+        run: python tests/check_no_private_paths.py
+
+      # ⚠ 5 处引擎修复（通道顺序 / hex 解析 / 归美术层 / clipPath 组 / 存盘状态）
+      #   全是**静默**的 —— 改错了不报错，只会让还原变差。
+      #   这个自测把它们钉成断言，防止下次重构悄悄改回去。
+      - name: Engine fixes regression
+        run: python tests/test_rebuild_fixes.py
+
+      - name: CLI smoke test
+        run: python -m layout_restore.cli --help
+
+      - name: Samples are reproducible
+        run: |
+          python examples/make_samples.py --out examples/samples
+          git diff --exit-code examples/samples || \
+            (echo "::error::示例图不可复现（重新生成后与仓库内不一致）"; exit 1)
+
+      - name: End-to-end build + verify
+        run: |
+          python -m layout_restore.cli build \
+            --src examples/samples/demo_param_card.png --key demo_param_card
+          python -m layout_restore.cli verify --pack out/demo_param_card
+
+      # ⚠ 像素层曾经**完全空转**（降级标记写了，px 素材一张没生成，
+      #   build 照样 exit 0 并打印「验收」结论）→ 这里显式断言产物存在。
+      - name: Pixel layer actually engaged
+        run: |
+          python - <<'PY'
+          import glob, json, os, sys
+          pack = glob.glob("out/demo_param_card/deliver/*_源件包")[0]
+          px = glob.glob(os.path.join(pack, "assets", "px_*.png"))
+          assert px, "像素层一张素材都没生成 —— 降级逻辑又空转了"
+          marker = json.load(open("out/demo_param_card/_px_fallback.json", encoding="utf-8"))
+          assert marker["changed"] == len(px), \
+              "标记的降级处数(%d) != px 素材数(%d)" % (marker["changed"], len(px))
+          rep = json.load(open("out/demo_param_card/_report.json", encoding="utf-8"))
+          live = rep["live"]["diff_gt20_pct"]
+          pxr = rep["px"]["diff_gt20_pct"]
+          assert pxr < live, "像素层版(%.2f%%)没有优于活字版(%.2f%%)" % (pxr, live)
+          print("像素层 OK：%d 张素材，diff %.2f%% < 活字 %.2f%%" % (len(px), pxr, live))
+          PY
+
+      # ⚠ 「验收通过」这件事本身必须被验证过：
+      #   交付包被改坏也照样判 OK 的坑（没有基准可比 → 不比对）。
+      - name: Verify gate actually rejects broken deliverables
+        run: python tests/test_verify_gate.py
+
+      - name: Upload deliverables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-restore-demo
+          path: |
+            out/demo_param_card/deliver/**
+            examples/results/**
