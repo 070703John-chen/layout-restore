@@ -14,9 +14,21 @@
     同平台（Windows ↔ Windows）下本仓库的示例图是**逐字节一致**的
     （本机实测 8/8 maxdiff=0），报告里会显式标出这一条。
 
-判定标准（两条都过）
-    1. 尺寸全等 —— 版式变了尺寸一定会变
-    2. 像素一致率 >= 99.5% 且 平均绝对差 <= 0.5
+判定标准（三条都过）
+    1. 尺寸全等 —— 版式变了尺寸一定会变（硬门槛）
+    2. 像素一致率 >= 98%
+    3. 平均绝对差 <= 1.2
+
+阈值是怎么定的
+    ubuntu-latest 实测（FreeType 版本与 Windows 不同）：
+        一致率  98.735% ~ 99.934%
+        平均差  0.061 ~ 0.897
+        最大差  210 ~ 233
+    差异形态：**集中在字形边缘**，且单像素可能从墨色直接翻到纸色 ——
+    这是 FreeType hinting 的亚像素抖动（同一根竖笔画落在像素边界另一侧），
+    不是渲染错误。同平台（Windows ↔ Windows）实测 8/8 逐字节一致。
+    真回归（版式错、字号错、字体实例错）会让尺寸变、或平均差跳到 5 以上，
+    上面两条阈值足以拦住。
 
 用法
     python tests/check_samples_reproducible.py
@@ -40,9 +52,9 @@ ROOT = os.path.dirname(HERE)
 SAMPLES = os.path.join(ROOT, "examples", "samples")
 MAKER = os.path.join(ROOT, "examples", "make_samples.py")
 
-# 判定阈值
-MIN_IDENTICAL_RATIO = 0.995   # 允许最多 0.5% 像素因栅格化微差
-MAX_MEAN_ABS_DIFF = 0.5       # 平均每通道绝对差
+# 判定阈值（依据见文件头「阈值是怎么定的」）
+MIN_IDENTICAL_RATIO = 0.98    # 实测最差 98.735%，留 0.27% 余量
+MAX_MEAN_ABS_DIFF = 1.2       # 实测最差 0.897，留余量
 
 
 def sha(path):
@@ -99,6 +111,7 @@ def main():
     print("-" * 96)
 
     all_byte_identical = True
+    all_pixel_identical = True
     failures = []
 
     for name in repo_pngs:
@@ -124,6 +137,8 @@ def main():
         byte_same = sha(a_path) == sha(b_path)
         if not byte_same:
             all_byte_identical = False
+        if identical_ratio < 1.0:
+            all_pixel_identical = False
 
         ok = identical_ratio >= MIN_IDENTICAL_RATIO and mean_abs <= MAX_MEAN_ABS_DIFF
         if not ok:
@@ -137,10 +152,13 @@ def main():
 
     print()
     if all_byte_identical:
-        print("字节级：8/8 逐字节一致（同平台可复现）")
-    else:
-        print("字节级：存在差异 —— 像素一致但 PNG 压缩流不同"
+        print("字节级：全部逐字节一致（同平台可复现）")
+    elif all_pixel_identical:
+        print("字节级：存在差异 —— 但像素完全一致，是 PNG 压缩流不同"
               "（zlib/libpng 版本差异，不是渲染问题）")
+    else:
+        print("字节级：存在差异 —— 且像素也有微差，形态为字形边缘的亚像素抖动"
+              "（FreeType hinting 跨平台不同；不是版式错误）")
     print("像素级：判定阈值 = 一致率 >= %.1f%% 且 平均差 <= %.2f" % (
         MIN_IDENTICAL_RATIO * 100, MAX_MEAN_ABS_DIFF))
     print()
